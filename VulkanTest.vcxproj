@@ -124,7 +124,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Users\ziton\OneDrive\文档\Visual Studio 2019\Libraries\glfw-3.3.9.bin.WIN64\include;C:\VulkanSDK\1.3.275.0\Include;C:\Users\ziton\OneDrive\文档\Visual Studio 2019\Libraries\glm;C:\Users\zitongc\Documents\Visual Studio 2019\Libraries\glfw-3.3.9.bin.WIN64\include;C:\Users\zitongc\Documents\Visual Studio 2019\Libraries\glm;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\ziton\source\repos\VulkanRepo;C:\Users\ziton\OneDrive\文档\Visual Studio 2019\Libraries\glfw-3.3.9.bin.WIN64\include;C:\VulkanSDK\1.3.275.0\Include;C:\Users\ziton\OneDrive\文档\Visual Studio 2019\Libraries\glm;C:\Users\zitongc\Documents\Visual Studio 2019\Libraries\glfw-3.3.9.bin.WIN64\include;C:\Users\zitongc\Documents\Visual Studio 2019\Libraries\glm;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -142,7 +142,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Users\ziton\OneDrive\文档\Visual Studio 2019\Libraries\glfw-3.3.9.bin.WIN64\include;C:\VulkanSDK\1.3.275.0\Include;C:\Users\ziton\OneDrive\文档\Visual Studio 2019\Libraries\glm;C:\Users\zitongc\Documents\Visual Studio 2019\Libraries\glfw-3.3.9.bin.WIN64\include;C:\Users\zitongc\Documents\Visual Studio 2019\Libraries\glm;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\ziton\source\repos\VulkanRepo;C:\Users\ziton\OneDrive\文档\Visual Studio 2019\Libraries\glfw-3.3.9.bin.WIN64\include;C:\VulkanSDK\1.3.275.0\Include;C:\Users\ziton\OneDrive\文档\Visual Studio 2019\Libraries\glm;C:\Users\zitongc\Documents\Visual Studio 2019\Libraries\glfw-3.3.9.bin.WIN64\include;C:\Users\zitongc\Documents\Visual Studio 2019\Libraries\glm;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -161,6 +161,7 @@
     <ClInclude Include="camera.h" />
     <ClInclude Include="event.h" />
     <ClInclude Include="parser.hpp" />
+    <ClInclude Include="stb_image.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
