@@ -44,7 +44,7 @@ EventType parseEventType(const std::string& eventType) {
 std::vector<Event> parseEventFile(const std::string& filePath) {
     std::vector<Event> events;
 
-    std::ifstream file("./Resources/" + filePath);
+    std::ifstream file(filePath);
     if (!file) {
         std::cerr << "Failed to open file: " << filePath << std::endl;
         return events;

@@ -49,7 +49,7 @@ uint32_t WIDTH = 1280;
 uint32_t HEIGHT = 720;
 const int MAX_FRAME_IN_FLIGHT = 2;
 uint32_t currentFrame = 0;
-std::string eventFilePath;
+std::string eventFilePath = "./model/events.txt";
 bool headless = false;
 
 
@@ -263,7 +263,7 @@ public:
 		isRenderCameraActive = true;
 		isUserCameraActive = false;
 		initVulkanHeadless();
-		auto events = parseEventFile("events.txt");
+		auto events = parseEventFile(eventFilePath);
 		handleEvents(events);
 		cleanupHeadless();
 	}
@@ -597,6 +597,30 @@ private:
 		endSingleTimeCommands(commandBuffer);
 	}
 
+	void copyImageToBuffer(VkBuffer& dstBuffer, VkImage& image, uint32_t width, uint32_t height) {
+		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+		VkBufferImageCopy region{};
+		region.bufferOffset = 0;
+		region.bufferRowLength = 0;
+		region.bufferImageHeight = 0;
+
+		region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		region.imageSubresource.mipLevel = 0;
+		region.imageSubresource.baseArrayLayer = 0;
+		region.imageSubresource.layerCount = 1;
+
+		region.imageOffset = { 0, 0, 0 };
+		region.imageExtent = {
+			width,
+			height,
+			1
+		};
+
+		vkCmdCopyImageToBuffer(commandBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dstBuffer, 1, &region);
+
+		endSingleTimeCommands(commandBuffer);
+	}
+
 	void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout) {
 		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
 
@@ -623,6 +647,13 @@ private:
 		if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
 			barrier.srcAccessMask = 0;
 			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+			sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+			barrier.srcAccessMask = 0;
+			barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 
 			sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
 			destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
@@ -1976,6 +2007,8 @@ private:
 		createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
 		
 		transitionImageLayout(offscreenImage, offscreenImageFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+		copyImageToBuffer(stagingBuffer, offscreenImage, offscreenExtent.width, offscreenExtent.height);
+		
 		// map values from staging buffer to CPU accessible area
 		void* data;
 		vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);

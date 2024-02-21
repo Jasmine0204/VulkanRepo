@@ -32,6 +32,7 @@
 *.app
 *.ipch
 *.pdb
+*.ppm
 .vs/
 x64/
 Debug/
