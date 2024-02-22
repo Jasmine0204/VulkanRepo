@@ -14,6 +14,7 @@
 #include <array>
 #include <limits>
 #include <algorithm> // For std::find and std::distance
+#include <variant> // xor options in materials
 
 #include <glm/gtx/quaternion.hpp>
 
@@ -26,6 +27,32 @@
 // https://kishoreganesh.com/post/writing-a-json-parser-in-cplusplus/
 
 // define structs
+struct Material {
+	std::string type;
+	std::string name;
+	Texture normalMap;
+	Texture displacementMap;
+
+	// Variant to handle different material types
+	std::variant<PBR, Lambertian, std::monostate /* for Mirror, Environment, Simple */> materialType;
+};
+
+struct Texture {
+	std::string src;
+};
+
+using ColorOrTexture = std::variant<glm::vec3, Texture>;
+
+struct PBR {
+	ColorOrTexture albedo;
+	ColorOrTexture roughness;
+	ColorOrTexture metalness;
+};
+
+struct Lambertian {
+	ColorOrTexture baseColor;
+};
+
 struct Attribute {
 	std::string src;
 	int offset;
@@ -38,6 +65,7 @@ struct Mesh {
 	std::string topology;
 	int count;
 	std::map<std::string, Attribute> attributes;
+	int material;
 
 	Attribute getAttribute(const std::string& attributeName) const {
 		auto it = attributes.find(attributeName);
@@ -56,7 +84,10 @@ struct Mesh {
 struct Vertex {
 	glm::vec3 pos;
 	glm::vec3 normal;
+	glm::vec4 tangent;
+	glm::vec2 texCoord;
 	glm::vec4 color;
+	
 
 	static VkVertexInputBindingDescription getBindingDescription() {
 		VkVertexInputBindingDescription bindingDescription{};
@@ -67,8 +98,8 @@ struct Vertex {
 		return bindingDescription;
 	}
 
-	static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
-		std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
+	static std::array<VkVertexInputAttributeDescription, 5> getAttributeDescriptions() {
+		std::array<VkVertexInputAttributeDescription, 5> attributeDescriptions{};
 
 		attributeDescriptions[0].binding = 0;
 		attributeDescriptions[0].location = 0;
@@ -82,8 +113,18 @@ struct Vertex {
 
 		attributeDescriptions[2].binding = 0;
 		attributeDescriptions[2].location = 2;
-		attributeDescriptions[2].format = VK_FORMAT_R8G8B8A8_UNORM;
-		attributeDescriptions[2].offset = offsetof(Vertex, color);
+		attributeDescriptions[2].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+		attributeDescriptions[2].offset = offsetof(Vertex, tangent);
+
+		attributeDescriptions[3].binding = 0;
+		attributeDescriptions[3].location = 3;
+		attributeDescriptions[3].format = VK_FORMAT_R32G32_SFLOAT;
+		attributeDescriptions[3].offset = offsetof(Vertex, texCoord);
+		
+		attributeDescriptions[4].binding = 0;
+		attributeDescriptions[4].location = 4;
+		attributeDescriptions[4].format = VK_FORMAT_R8G8B8A8_UNORM;
+		attributeDescriptions[4].offset = offsetof(Vertex, color);
 
 		return attributeDescriptions;
 	}
@@ -108,6 +149,7 @@ struct Node {
 	glm::vec3 scale;
 	int mesh = -1;
 	int camera = -1;
+	int environment;
 	std::vector<int> children;
 	bool operator==(const Node& other) const {
 		return (name == other.name && translation == other.translation); // compare 'value' to find node
@@ -154,6 +196,7 @@ public:
 	std::vector<Node> nodes;
 	std::vector<Camera> cameras;
 	std::vector<AnimationClip> clips;
+	std::vector<Material> materials;
 	Scene parsedScene;
 
 	std::unordered_map<int, int> meshIndexMap;
@@ -172,7 +215,12 @@ public:
 		int containerIndex = nodes.size();
 		nodes.push_back(node);
 		globalNodeIndexMap[globalPosition] = containerIndex;
-		//std::cout << "In parser, nodes size: " << nodes.size() << "\n";
+	}
+
+	void addMaterial(const Material& material, int globalPosition) {
+		int containerIndex = materials.size();
+		materials.push_back(material);
+		globalNodeIndexMap[globalPosition] = containerIndex;
 	}
 
 	void addCamera(const Camera& camera, int globalPosition) {
@@ -220,6 +268,7 @@ public:
 
 	const std::vector<Mesh>& getMeshes() const { return meshes; }
 	const std::vector<Node>& getNodes() const { return nodes; }
+	const std::vector<Material>& getMaterials() const { return materials; }
 	const std::vector<Camera>& getCameras() const { return cameras; }
 	const std::vector<AnimationClip>& getClips() const { return clips; }
 	const Scene& getScene() const { return parsedScene; }
@@ -345,6 +394,10 @@ private:
 				globalPosition++;
 				AnimationClip clip = parseClip(str, pos, sceneGraph);
 			}
+			else if (type == "MATERIAL") {
+				globalPosition++;
+				Material material = parseMaterial(str, pos, sceneGraph);
+			}
 		}
 		skipWhitespace(str, pos);
 
@@ -352,6 +405,118 @@ private:
 		return; // end object
 
 	}
+
+	Material parseMaterial(const std::string& str, size_t& pos, SceneGraph& sceneGraph) {
+		Material material;
+		while (true) {
+			skipWhitespace(str, pos);
+			if (str[pos] == '}') {
+				pos++; // Skip the closing brace
+				break;
+			}
+			std::string key = parseString(str, pos);
+			skipWhitespace(str, pos);
+			if (str[pos] != ':') {
+				std::cerr << "Expected ':' after key \"" << key << "\" at position " << pos << "\n";
+				break;
+			}
+			pos++; // Skip the colon
+			skipWhitespace(str, pos);
+
+			if (key == "type") {
+				material.type = parseString(str, pos);
+			}
+			else if (key == "name") {
+				material.name = parseString(str, pos);
+			}
+			else if (key == "normalMap") {
+				material.normalMap = parseTexture(str, pos);
+			}
+			else if (key == "displacementMap") {
+				material.displacementMap = parseTexture(str, pos);
+			}
+			else if (key == "pbr") {
+				PBR pbrMaterial;
+				pbrMaterial.albedo = parseColorOrTexture(str, pos);
+				pbrMaterial.roughness = parseColorOrTexture(str, pos);
+				pbrMaterial.metalness = parseColorOrTexture(str, pos);
+				material.materialType = pbrMaterial;
+			}
+			else if (key == "lambertian") {
+				Lambertian lambertianMaterial;
+				lambertianMaterial.baseColor = parseColorOrTexture(str, pos);
+				material.materialType = lambertianMaterial;
+			}
+			else if (key == "mirror" || key == "environment" || key == "simple") {
+				// These types have no parameters, represented by std::monostate
+				material.materialType = std::monostate{};
+			}
+
+			skipWhitespace(str, pos);
+			if (str[pos] == ',') {
+				pos++; // Move to the next key
+			}
+		}
+		sceneGraph.addMaterial(material, globalPosition);
+		return material;
+	}
+
+	ColorOrTexture parseColorOrTexture(const std::string& str, size_t& pos) {
+		skipWhitespace(str, pos);
+		if (str[pos] == '[') {
+			// Parse as Color
+			return parseVec3(str, pos);
+		}
+		else if (str[pos] == '{') {
+			// Parse as TextureSource
+			return parseTexture(str, pos);
+		}
+		else {
+			std::cerr << "Unexpected character for ColorOrTexture at position " << pos << ": " << str[pos] << "\n";
+			return glm::vec3(); // Returning empty variant on error
+		}
+	}
+
+	Texture parseTexture(const std::string& str, size_t& pos) {
+		Texture texture;
+		skipWhitespace(str, pos);
+		if (str[pos] != '{') {
+			std::cerr << "Expected '{' at position " << pos << "\n";
+			return texture; // Returning an empty TextureSource on error
+		}
+		pos++; // Skip the opening brace
+
+		while (true) {
+			skipWhitespace(str, pos);
+			if (str[pos] == '}') {
+				pos++; // Skip the closing brace
+				break;
+			}
+			std::string key = parseString(str, pos);
+			skipWhitespace(str, pos);
+			if (str[pos] != ':') {
+				std::cerr << "Expected ':' after key \"" << key << "\" at position " << pos << "\n";
+				break;
+			}
+			pos++; // Skip the colon
+			skipWhitespace(str, pos);
+
+			if (key == "src") {
+				texture.src = parseString(str, pos);
+			}
+
+			skipWhitespace(str, pos);
+			if (str[pos] == ',') {
+				pos++; // Move to the next key
+			}
+			else if (str[pos] != '}') {
+				std::cerr << "Expected '}' or ',' at position " << pos << "\n";
+				break;
+			}
+		}
+		return texture;
+	}
+	
 
 	AnimationClip parseClip(const std::string& str, size_t& pos, SceneGraph& sceneGraph) {
 		AnimationClip clip;
@@ -456,6 +621,9 @@ private:
 			else if (key == "attributes") {
 				parseAttributes(mesh.attributes, str, pos);
 			}
+			else if (key == "material") {
+				mesh.material = parseInt(str, pos);
+			}
 
 			skipWhitespace(str, pos);
 			if (str[pos] == ',') {
@@ -504,6 +672,9 @@ private:
 			}
 			else if (key == "children") {
 				node.children = parseIntArray(str, pos);
+			}
+			else if (key == "environment") {
+				node.environment = parseInt(str, pos);
 			}
 
 			skipWhitespace(str, pos);

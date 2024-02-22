@@ -93,33 +93,58 @@ std::vector<Vertex> parseVertices(const std::string fileName, const Mesh& mesh) 
 	std::vector<char> verticesBuffer = readBinaryFile("./model/" + fileName);
 	std::vector<Vertex> vertices;
 	size_t numVertices = mesh.count;
+
+	Attribute positionAttr = mesh.getAttribute("POSITION");
+	Attribute normalAttr = mesh.getAttribute("NORMAL");
+	Attribute tangentAttr = mesh.getAttribute("TANGENT");
+	Attribute texcoordAttr = mesh.getAttribute("TEXCOORD");
+	Attribute colorAttr = mesh.getAttribute("COLOR");
+
 	for (size_t i = 0; i < numVertices; ++i) {
 		Vertex vertex;
+
 		// parse position
-		size_t offset = i * 28 + 0;
+		int stride = positionAttr.stride;
+		size_t offset = i * stride + positionAttr.offset;
 		if (offset + sizeof(vertex.pos) > verticesBuffer.size()) {
 			throw std::runtime_error("Position data exceeds buffer limits");
 		}
-		memcpy(&vertex.pos, verticesBuffer.data() + offset, sizeof(vertex.pos));
+		memcpy(&vertex.pos, verticesBuffer.data() + positionAttr.offset, sizeof(vertex.pos));
 
 		// parse normal
-		offset = i * 28 + 12;
+		offset = i * normalAttr.stride + normalAttr.offset;
 		if (offset + sizeof(vertex.normal) > verticesBuffer.size()) {
 			throw std::runtime_error("Normal data exceeds buffer limits");
 		}
-		memcpy(&vertex.normal, verticesBuffer.data() + offset, sizeof(vertex.normal));
+		memcpy(&vertex.normal, verticesBuffer.data() + normalAttr.offset, sizeof(vertex.normal));
+
+		// parse tangent
+		offset = i * tangentAttr.stride + tangentAttr.offset;
+		if (offset + sizeof(vertex.tangent) > verticesBuffer.size()) {
+			throw std::runtime_error("tangent data exceeds buffer limits");
+		}
+		memcpy(&vertex.tangent, verticesBuffer.data() + tangentAttr.offset, sizeof(vertex.tangent));
+
+		// parse texcoord
+		offset = i * texcoordAttr.stride + texcoordAttr.offset;
+		if (offset + sizeof(vertex.texCoord) > verticesBuffer.size()) {
+			throw std::runtime_error("texcoord data exceeds buffer limits");
+		}
+		memcpy(&vertex.texCoord, verticesBuffer.data() + texcoordAttr.offset, sizeof(vertex.texCoord));
 
 		// parse color
-		uint32_t color;
-		offset = i * 28 + 24;
-		if (offset + sizeof(color) > verticesBuffer.size()) {
+		int colorStride = colorAttr.stride;
+		size_t colorOffset = i * colorStride + colorAttr.offset;
+		if (colorOffset + sizeof(uint32_t) > verticesBuffer.size()) {
 			throw std::runtime_error("Color data exceeds buffer limits");
 		}
 
-		memcpy(&vertex.color.r, verticesBuffer.data() + offset, sizeof(uint32_t)); // R
-		memcpy(&vertex.color.g, verticesBuffer.data() + offset + 4, sizeof(uint32_t)); // G
-		memcpy(&vertex.color.b, verticesBuffer.data() + offset + 8, sizeof(uint32_t)); // B
-		memcpy(&vertex.color.a, verticesBuffer.data() + offset + 12, sizeof(uint32_t)); // A分量
+		uint8_t r, g, b, a;
+		memcpy(&r, verticesBuffer.data() + colorOffset, sizeof(uint8_t));
+		memcpy(&g, verticesBuffer.data() + colorOffset + 1, sizeof(uint8_t));
+		memcpy(&b, verticesBuffer.data() + colorOffset + 2, sizeof(uint8_t));
+		memcpy(&a, verticesBuffer.data() + colorOffset + 3, sizeof(uint8_t));
+		vertex.color = glm::vec4(r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f);
 
 		vertices.push_back(vertex);
 	}
@@ -380,6 +405,8 @@ private:
 	// texture images
 	VkImage textureImage;
 	VkDeviceMemory textureImageMemory;
+	VkImageView textureImageView;
+	VkSampler textureSampler;
 
 	void initWindow() {
 		glfwInit();
@@ -483,22 +510,36 @@ private:
 	void initVulkan() {
 		createInstance();
 		createSurface();
+
 		pickPhysicalDevice();
 		createLogicalDevice();
+
 		createSwapChain();
 		createImageViews();
+
 		createRenderPass(swapChainImageFormat, swapChainRenderPass);
 		createDescriptorSetLayout();
 		createGraphicsPipeline(swapChainExtent, swapChainRenderPass);
+
 		createCommandPool();
+
 		createTextureImage(textureImage, textureImageMemory);
+		createTextureImageView();
+		createTextureSampler();
+
 		createDepthResources(swapChainExtent);
+
 		createFramebuffers();
+
 		createVertexBuffersForAllMeshes(sceneGraph.meshes);
 		createIndexBuffer();
+
 		createUniformBuffer();
+
+
 		createDescriptorPool();
 		createDescriptorSets();
+
 		createCommandBuffers(swapChainCommandBuffers);
 		createSyncObjects();
 	}
@@ -528,6 +569,51 @@ private:
 		createSyncObjects();
 	}
 
+	void createTextureSampler() {
+		VkSamplerCreateInfo samplerInfo{};
+		samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+		samplerInfo.magFilter = VK_FILTER_LINEAR; // VK_FILTER_NEAREST or VK_FILTER_LINEAR
+		samplerInfo.minFilter = VK_FILTER_LINEAR;
+
+		// VK_SAMPLER_ADDRESS_MODE_REPEAT
+		// VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT
+		// VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE
+		// VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE
+		// VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER
+		samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+
+		VkPhysicalDeviceProperties properties{};
+		vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+
+		samplerInfo.anisotropyEnable = VK_TRUE;
+		samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+
+		// white/black/transparent
+		samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+
+		// [0, texWidth) and [0, texHeight) or [0, 1) <- we want this
+		samplerInfo.unnormalizedCoordinates = VK_FALSE;
+
+		// used in shadow maps
+		samplerInfo.compareEnable = VK_FALSE;
+		samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+
+		samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		samplerInfo.mipLodBias = 0.0f;
+		samplerInfo.minLod = 0.0f;
+		samplerInfo.maxLod = 0.0f;
+
+		if (vkCreateSampler(device, &samplerInfo, nullptr, &textureSampler) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create texture sampler!");
+		}
+	}
+
+	void createTextureImageView() {
+		textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
+	};
+
 	void createTextureImage(VkImage& textureImage, VkDeviceMemory& textureImageMemory) {
 		int texWidth, texHeight, texChannels;
 		stbi_uc* pixels = stbi_load("model/pink.png", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
@@ -553,14 +639,14 @@ private:
 		stbi_image_free(pixels);
 
 		createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage, textureImageMemory);
-		
+
 		// Transition the texture image to VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
 		// Execute the buffer to image copy operation
 		transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 		copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
 		// transition to prepare it for shader access
 		transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-		
+
 		// clean up buffer & memory
 		vkDestroyBuffer(device, stagingBuffer, nullptr);
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
@@ -805,23 +891,38 @@ private:
 			bufferInfo.offset = 0;
 			bufferInfo.range = sizeof(UniformBufferObject);
 
+			// bind the actual image and sampler resources
+			VkDescriptorImageInfo imageInfo{};
+			imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			imageInfo.imageView = textureImageView;
+			imageInfo.sampler = textureSampler;
+
 			// The configuration of descriptors is updated using the vkUpdateDescriptorSets
 			// takes an array of VkWriteDescriptorSet structs as parameter
-			VkWriteDescriptorSet descriptorWrite{};
-			descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			descriptorWrite.dstSet = descriptorSets[frame];
-			descriptorWrite.dstBinding = 0;
-			descriptorWrite.dstArrayElement = 0;
-			descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-			descriptorWrite.descriptorCount = 1; //specifies how many array elements you want to update
-			descriptorWrite.pBufferInfo = &bufferInfo;
+			std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+
+			descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrites[0].dstSet = descriptorSets[frame];
+			descriptorWrites[0].dstBinding = 0;
+			descriptorWrites[0].dstArrayElement = 0;
+			descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			descriptorWrites[0].descriptorCount = 1;
+			descriptorWrites[0].pBufferInfo = &bufferInfo;
 			//descriptorWrite.pImageInfo = nullptr;
 			//descriptorWrite.pTexelBufferView = nullptr;
 			//pBufferInfo field is used for descriptors that refer to buffer data
 			//pImageInfo is used for descriptors that refer to image data
 			//pTexelBufferView is used for descriptors that refer to buffer views
 
-			vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
+			descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrites[1].dstSet = descriptorSets[frame];
+			descriptorWrites[1].dstBinding = 1;
+			descriptorWrites[1].dstArrayElement = 0;
+			descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			descriptorWrites[1].descriptorCount = 1;
+			descriptorWrites[1].pImageInfo = &imageInfo;
+
+			vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 
 		}
 
@@ -829,14 +930,16 @@ private:
 
 	void createDescriptorPool() {
 		//  allocate one of these descriptors for every frame
-		VkDescriptorPoolSize poolSize{};
-		poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		poolSize.descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT);
+		std::array<VkDescriptorPoolSize, 2> poolSizes{};
+		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT);
+		poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT);
 
 		VkDescriptorPoolCreateInfo poolInfo{};
 		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-		poolInfo.poolSizeCount = 1;
-		poolInfo.pPoolSizes = &poolSize;
+		poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+		poolInfo.pPoolSizes = poolSizes.data();
 		poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT);
 
 		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
@@ -875,10 +978,19 @@ private:
 		// which shader stages the descriptor is going to be referenced
 		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
+		// for a combined image sampler descriptor
+		VkDescriptorSetLayoutBinding samplerLayoutBinding{};
+		samplerLayoutBinding.binding = 1;
+		samplerLayoutBinding.descriptorCount = 1;
+		samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		samplerLayoutBinding.pImmutableSamplers = nullptr;
+		samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+		std::array<VkDescriptorSetLayoutBinding, 2> bindings = { uboLayoutBinding, samplerLayoutBinding };
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-		layoutInfo.bindingCount = 1;
-		layoutInfo.pBindings = &uboLayoutBinding;
+		layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+		layoutInfo.pBindings = bindings.data();
 
 		if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create descriptor set layout!");
@@ -1688,6 +1800,10 @@ private:
 	}
 
 	void createLogicalDevice() {
+		// request anisotropic function
+		VkPhysicalDeviceFeatures deviceFeatures{};
+		deviceFeatures.samplerAnisotropy = VK_TRUE;
+
 		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
 		std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
@@ -1888,7 +2004,9 @@ private:
 				SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
 				swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
 			}
-			return extensionSupported && indices.isComplete() && swapChainAdequate;
+			VkPhysicalDeviceFeatures supportedFeatures;
+			vkGetPhysicalDeviceFeatures(device, &supportedFeatures);
+			return extensionSupported && indices.isComplete() && swapChainAdequate && supportedFeatures.samplerAnisotropy;
 		}
 		else {
 			return indices.isComplete();
@@ -2005,10 +2123,10 @@ private:
 		VkDeviceMemory stagingBufferMemory;
 
 		createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-		
+
 		transitionImageLayout(offscreenImage, offscreenImageFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 		copyImageToBuffer(stagingBuffer, offscreenImage, offscreenExtent.width, offscreenExtent.height);
-		
+
 		// map values from staging buffer to CPU accessible area
 		void* data;
 		vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
@@ -2300,6 +2418,8 @@ private:
 
 		cleanupSwapChain();
 
+		vkDestroySampler(device, textureSampler, nullptr);
+		vkDestroyImageView(device, textureImageView, nullptr);
 		vkDestroyImage(device, textureImage, nullptr);
 		vkFreeMemory(device, textureImageMemory, nullptr);
 
