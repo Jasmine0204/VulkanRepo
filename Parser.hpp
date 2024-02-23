@@ -27,14 +27,20 @@
 // https://kishoreganesh.com/post/writing-a-json-parser-in-cplusplus/
 
 // define structs
-struct Material {
-	std::string type;
-	std::string name;
-	Texture normalMap;
-	Texture displacementMap;
 
-	// Variant to handle different material types
-	std::variant<PBR, Lambertian, std::monostate /* for Mirror, Environment, Simple */> materialType;
+
+struct Mirror {};
+struct Simple {};
+
+struct Radiance {
+	std::string src;
+	std::string type;
+	std::string format;
+};
+
+struct Environment {
+	std::string name;
+	Radiance radiance;
 };
 
 struct Texture {
@@ -52,6 +58,20 @@ struct PBR {
 struct Lambertian {
 	ColorOrTexture baseColor;
 };
+
+struct Material {
+	std::string name;
+	Texture normalMap;
+	Texture displacementMap;
+
+	// Variant to handle different material types
+	std::variant<PBR, Lambertian, Mirror, Environment, Simple, std::monostate> materialType;
+	bool isSimple() const {
+		return std::holds_alternative<Simple>(materialType);
+	}
+};
+
+
 
 struct Attribute {
 	std::string src;
@@ -87,7 +107,7 @@ struct Vertex {
 	glm::vec4 tangent;
 	glm::vec2 texCoord;
 	glm::vec4 color;
-	
+
 
 	static VkVertexInputBindingDescription getBindingDescription() {
 		VkVertexInputBindingDescription bindingDescription{};
@@ -120,11 +140,48 @@ struct Vertex {
 		attributeDescriptions[3].location = 3;
 		attributeDescriptions[3].format = VK_FORMAT_R32G32_SFLOAT;
 		attributeDescriptions[3].offset = offsetof(Vertex, texCoord);
-		
+
 		attributeDescriptions[4].binding = 0;
 		attributeDescriptions[4].location = 4;
 		attributeDescriptions[4].format = VK_FORMAT_R8G8B8A8_UNORM;
 		attributeDescriptions[4].offset = offsetof(Vertex, color);
+
+		return attributeDescriptions;
+	}
+};
+
+struct SimpleVertex {
+	glm::vec3 pos;
+	glm::vec3 normal;
+	glm::vec4 color;
+
+
+	static VkVertexInputBindingDescription getBindingDescription() {
+		VkVertexInputBindingDescription bindingDescription{};
+		bindingDescription.binding = 0;
+		bindingDescription.stride = sizeof(SimpleVertex);
+		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+		return bindingDescription;
+	}
+
+	static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
+		std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
+
+		attributeDescriptions[0].binding = 0;
+		attributeDescriptions[0].location = 0;
+		attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescriptions[0].offset = offsetof(Vertex, pos);
+
+		attributeDescriptions[1].binding = 0;
+		attributeDescriptions[1].location = 1;
+		attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescriptions[1].offset = offsetof(Vertex, normal);
+
+		attributeDescriptions[2].binding = 0;
+		attributeDescriptions[2].location = 2;
+		attributeDescriptions[2].format = VK_FORMAT_R8G8B8A8_UNORM;
+		attributeDescriptions[2].offset = offsetof(Vertex, color);
 
 		return attributeDescriptions;
 	}
@@ -156,7 +213,6 @@ struct Node {
 	}
 };
 
-
 glm::mat4 calculateModelMatrix(const Node& node) {
 	glm::mat4 translationMatrix = glm::translate(glm::mat4(1.0f), node.translation);
 	glm::mat4 rotationMatrix = glm::toMat4(node.rotation);
@@ -165,7 +221,6 @@ glm::mat4 calculateModelMatrix(const Node& node) {
 	// model matrix =
 	return translationMatrix * rotationMatrix * scaleMatrix;
 }
-
 
 struct Scene {
 	std::string name;
@@ -188,7 +243,6 @@ struct NodeAnimation {
 	std::unordered_map<std::string, AnimationClip> clips; // use channel name as key
 };
 
-
 // stored the parsed values
 class SceneGraph {
 public:
@@ -197,13 +251,14 @@ public:
 	std::vector<Camera> cameras;
 	std::vector<AnimationClip> clips;
 	std::vector<Material> materials;
+	Environment environment;
 	Scene parsedScene;
 
 	std::unordered_map<int, int> meshIndexMap;
 	std::unordered_map<int, int> cameraIndexMap;
 	std::unordered_map<int, int> globalNodeIndexMap;
+	std::unordered_map<int, int> materialIndexMap;
 	std::unordered_map<int, NodeAnimation> nodeAnimations;
-
 
 	void addMesh(const Mesh& mesh, int globalIndex) {
 		int containerIndex = meshes.size();
@@ -220,7 +275,7 @@ public:
 	void addMaterial(const Material& material, int globalPosition) {
 		int containerIndex = materials.size();
 		materials.push_back(material);
-		globalNodeIndexMap[globalPosition] = containerIndex;
+		materialIndexMap[globalPosition] = containerIndex;
 	}
 
 	void addCamera(const Camera& camera, int globalPosition) {
@@ -228,6 +283,10 @@ public:
 		cameras.push_back(camera);
 		cameraIndexMap[globalPosition] = containerIndex;
 		//std::cout << "In parser, cameras size: " << cameras.size() << "\n";
+	}
+
+	void addEnvironment(const Environment& env) {
+		environment = env;
 	}
 
 	void setScene(const Scene& scene) {
@@ -265,11 +324,11 @@ public:
 	}
 
 	// give methods that can access the value
-
 	const std::vector<Mesh>& getMeshes() const { return meshes; }
 	const std::vector<Node>& getNodes() const { return nodes; }
 	const std::vector<Material>& getMaterials() const { return materials; }
 	const std::vector<Camera>& getCameras() const { return cameras; }
+	const Environment& getEnvironment() const { return environment; }
 	const std::vector<AnimationClip>& getClips() const { return clips; }
 	const Scene& getScene() const { return parsedScene; }
 };
@@ -398,12 +457,88 @@ private:
 				globalPosition++;
 				Material material = parseMaterial(str, pos, sceneGraph);
 			}
+			else if (type == "ENVIRONMENT") {
+				globalPosition++;
+				Environment environment = parseEnvironment(str, pos, sceneGraph);
+			}
 		}
 		skipWhitespace(str, pos);
 
 		std::cout << "One object done\n";
 		return; // end object
 
+	}
+
+	Environment parseEnvironment(const std::string& str, size_t& pos, SceneGraph& sceneGraph) {
+		Environment env;
+		while (true) {
+			skipWhitespace(str, pos);
+			if (str[pos] == '}') {
+				pos++; // Skip closing brace
+				break;
+			}
+			std::string key = parseString(str, pos);
+			skipWhitespace(str, pos);
+			if (str[pos] != ':') {
+				std::cerr << "Expected ':' after key at position " << pos << "\n";
+				return env;
+			}
+			pos++; // Skip colon
+			skipWhitespace(str, pos);
+
+			if (key == "name") {
+				env.name = parseString(str, pos);
+			}
+			else if (key == "radiance") {
+				env.radiance = parseRadiance(str, pos);
+			}
+
+			skipWhitespace(str, pos);
+			if (str[pos] == ',') {
+				pos++; // Move to next key
+			}
+		}
+		sceneGraph.addEnvironment(env);
+		return env;
+	}
+
+	Radiance parseRadiance(const std::string& str, size_t& pos) {
+		Radiance radiance;
+		skipWhitespace(str, pos);
+		if (str[pos] != '{') {
+			std::cerr << "Expected '{' at position " << pos << "\n";
+			return radiance; // Return empty Radiance on error
+		}
+		pos++; // Skip opening brace
+
+		while (str[pos] != '}') {
+			skipWhitespace(str, pos);
+			std::string key = parseString(str, pos);
+			skipWhitespace(str, pos);
+			if (str[pos] != ':') {
+				std::cerr << "Expected ':' after key \"" << key << "\" at position " << pos << "\n";
+				break;
+			}
+			pos++; // Skip colon
+			skipWhitespace(str, pos);
+
+			if (key == "src") {
+				radiance.src = parseString(str, pos);
+			}
+			else if (key == "type") {
+				radiance.type = parseString(str, pos);
+			}
+			else if (key == "format") {
+				radiance.format = parseString(str, pos);
+			}
+
+			skipWhitespace(str, pos);
+			if (str[pos] == ',') {
+				pos++; // Move to next key
+			}
+		}
+		pos++; // Skip closing brace
+		return radiance;
 	}
 
 	Material parseMaterial(const std::string& str, size_t& pos, SceneGraph& sceneGraph) {
@@ -423,10 +558,7 @@ private:
 			pos++; // Skip the colon
 			skipWhitespace(str, pos);
 
-			if (key == "type") {
-				material.type = parseString(str, pos);
-			}
-			else if (key == "name") {
+			if (key == "name") {
 				material.name = parseString(str, pos);
 			}
 			else if (key == "normalMap") {
@@ -447,9 +579,26 @@ private:
 				lambertianMaterial.baseColor = parseColorOrTexture(str, pos);
 				material.materialType = lambertianMaterial;
 			}
-			else if (key == "mirror" || key == "environment" || key == "simple") {
-				// These types have no parameters, represented by std::monostate
-				material.materialType = std::monostate{};
+			else if (key == "mirror") {
+				material.materialType = Mirror{};
+				// skip the blank brackets
+				pos++;
+				skipWhitespace(str, pos);
+				pos++;
+			}
+			else if (key == "environment") {
+				material.materialType = Environment{};
+				// skip the blank brackets
+				pos++;
+				skipWhitespace(str, pos);
+				pos++;
+			}
+			else if (key == "simple") {
+				material.materialType = Simple{};
+				// skip the blank brackets
+				pos++;
+				skipWhitespace(str, pos);
+				pos++;
 			}
 
 			skipWhitespace(str, pos);
@@ -516,7 +665,6 @@ private:
 		}
 		return texture;
 	}
-	
 
 	AnimationClip parseClip(const std::string& str, size_t& pos, SceneGraph& sceneGraph) {
 		AnimationClip clip;
@@ -551,7 +699,7 @@ private:
 				clip.times = parseDoubleArray(str, pos);
 			}
 			else if (key == "values") {
-				clip.values = parseDoubleArray(str, pos);	
+				clip.values = parseDoubleArray(str, pos);
 			}
 			else if (key == "interpolation") {
 				clip.interpolation = parseString(str, pos);
@@ -567,7 +715,6 @@ private:
 		sceneGraph.addClip(clip);
 		return clip;
 	}
-
 
 	std::string parseString(const std::string& str, size_t& pos) {
 		std::string result;
@@ -687,7 +834,6 @@ private:
 
 		return node;
 	}
-
 
 	Scene parseScene(const std::string& str, size_t& pos, SceneGraph& sceneGraph) {
 		Scene scene;
@@ -1069,8 +1215,6 @@ private:
 		pos++;
 		return result;
 	}
-
-
 };
 
 int parseScene(SceneGraph& sceneGraph, const std::string& filename) {
