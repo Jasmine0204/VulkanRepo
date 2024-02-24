@@ -276,7 +276,7 @@ public:
 		globalNodeIndexMap[globalPosition] = containerIndex;
 	}
 
-	void addMaterial(const Material& material, int globalPosition) {
+	void addMaterial(Material& material, int globalPosition) {
 		int containerIndex = materials.size();
 		materials.push_back(material);
 		materialIndexMap[globalPosition] = containerIndex;
@@ -330,7 +330,7 @@ public:
 	// give methods that can access the value
 	const std::vector<Mesh>& getMeshes() const { return meshes; }
 	const std::vector<Node>& getNodes() const { return nodes; }
-	const std::vector<Material>& getMaterials() const { return materials; }
+	std::vector<Material>& getMaterials()  { return materials; }
 	const std::vector<Camera>& getCameras() const { return cameras; }
 	const Environment& getEnvironment() const { return environment; }
 	const std::vector<AnimationClip>& getClips() const { return clips; }

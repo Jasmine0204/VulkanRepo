@@ -68,7 +68,7 @@ const std::vector<Mesh>& meshes = sceneGraph.getMeshes();
 const std::vector<Node>& nodes = sceneGraph.getNodes();
 const std::vector<Camera>& cameras = sceneGraph.getCameras();
 const std::vector<AnimationClip>& clips = sceneGraph.getClips();
-std::vector<Material> materials = sceneGraph.getMaterials();
+std::vector<Material>& materials = sceneGraph.getMaterials();
 const Scene& scene = sceneGraph.getScene();
 const Environment& environment = sceneGraph.getEnvironment();
 
@@ -162,31 +162,25 @@ std::vector<SimpleVertex> parseSimpleVertices(const std::string fileName, const 
 
 	size_t numVertices = mesh.count;
 
-	Attribute positionAttr = mesh.getAttribute("POSITION");
-	Attribute normalAttr = mesh.getAttribute("NORMAL");
-	Attribute colorAttr = mesh.getAttribute("COLOR");
-
 	for (size_t i = 0; i < numVertices; ++i) {
 		SimpleVertex simpleVertex;
 
 		// parse position
-		int stride = positionAttr.stride;
-		size_t offset = i * stride + positionAttr.offset;
-		if (offset + sizeof(simpleVertex.pos) > verticesBuffer.size()) {
+		size_t positionOffset = i * 28;
+		if (positionOffset + sizeof(simpleVertex.pos) > verticesBuffer.size()) {
 			throw std::runtime_error("Position data exceeds buffer limits");
 		}
-		memcpy(&simpleVertex.pos, verticesBuffer.data() + positionAttr.offset, sizeof(simpleVertex.pos));
+		memcpy(&simpleVertex.pos, verticesBuffer.data() + positionOffset, sizeof(simpleVertex.pos));
 
 		// parse normal
-		offset = i * normalAttr.stride + normalAttr.offset;
-		if (offset + sizeof(simpleVertex.normal) > verticesBuffer.size()) {
+		size_t normalOffset = i * 28 + 12;
+		if (normalOffset + sizeof(simpleVertex.normal) > verticesBuffer.size()) {
 			throw std::runtime_error("Normal data exceeds buffer limits");
 		}
-		memcpy(&simpleVertex.normal, verticesBuffer.data() + normalAttr.offset, sizeof(simpleVertex.normal));
+		memcpy(&simpleVertex.normal, verticesBuffer.data() + normalOffset, sizeof(simpleVertex.normal));
 
 		// parse color
-		int colorStride = colorAttr.stride;
-		size_t colorOffset = i * colorStride + colorAttr.offset;
+		size_t colorOffset = i * 28 + 24;
 		if (colorOffset + sizeof(uint32_t) > verticesBuffer.size()) {
 			throw std::runtime_error("Color data exceeds buffer limits");
 		}
@@ -200,6 +194,7 @@ std::vector<SimpleVertex> parseSimpleVertices(const std::string fileName, const 
 
 		simpleVertices.push_back(simpleVertex);
 	}
+
 	return simpleVertices;
 }
 
@@ -226,6 +221,7 @@ const bool enableValidationLayers = true;
 struct UniformBufferObject {
 	glm::mat4 view;
 	glm::mat4 projection;
+	glm::vec3 cameraPos;
 };
 
 // store push constants struct
@@ -401,6 +397,7 @@ private:
 	VkRenderPass swapChainRenderPass;
 	VkRenderPass offscreenRenderPass;
 	VkPipeline graphicsPipeline;
+	VkPipeline simpleGraphicsPipeline;
 
 	// descriptors
 	VkDescriptorPool descriptorPool;
@@ -471,10 +468,7 @@ private:
 	// push constants
 	PushConstants pushConstants;
 
-	// texture images
-	VkImage textureImage;
-	VkDeviceMemory textureImageMemory;
-	VkImageView textureImageView;
+	// texture sampler
 	VkSampler textureSampler;
 
 	// environment cubemap
@@ -482,10 +476,10 @@ private:
 	VkDeviceMemory cubemapImageMemory;
 	VkImageView cubemapImageView;
 
-	// normal map
-	VkImage normalMap;
-	VkDeviceMemory normalmapImageMemory;
-	VkImageView normalmapImageView;
+	// default pixel
+	VkImage defaultImage;
+	VkDeviceMemory defaultImageMemory;
+	VkImageView defaultImageView;
 
 	void initWindow() {
 		glfwInit();
@@ -596,11 +590,19 @@ private:
 
 		createRenderPass(swapChainImageFormat, swapChainRenderPass);
 		createDescriptorSetLayout();
-		createGraphicsPipeline(swapChainExtent, swapChainRenderPass);
+		auto bind = Vertex::getBindingDescription();
+		auto attr = Vertex::getAttributeDescriptions();
+		auto simpleBind = SimpleVertex::getBindingDescription();
+		auto simpleAttr = SimpleVertex::getAttributeDescriptions();
+		createPipelineLayout();
+		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, graphicsPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()));
+		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, simpleGraphicsPipeline, simpleBind, std::vector<VkVertexInputAttributeDescription>(simpleAttr.begin(), simpleAttr.end()));
 
 		createCommandPool();
 
 		createSampler(textureSampler);
+		createTextureImage(defaultImage, defaultImageMemory, "default.png");
+		defaultImageView = createImageView(defaultImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 		loadAllTextures();
 
 		createCubemap(cubemap, cubemapImageMemory, environment.radiance.src);
@@ -611,7 +613,7 @@ private:
 		createFramebuffers();
 
 		createVertexBuffersForAllMeshes(sceneGraph.meshes);
-		createIndexBuffer();
+		//createIndexBuffer();
 
 		createUniformBuffer();
 
@@ -635,7 +637,14 @@ private:
 		offscreenImageView = createImageView(offscreenImage, offscreenImageFormat, VK_IMAGE_ASPECT_COLOR_BIT);
 		createRenderPass(offscreenImageFormat, offscreenRenderPass);
 		createDescriptorSetLayout();
-		createGraphicsPipeline(offscreenExtent, offscreenRenderPass);
+		auto bind = Vertex::getBindingDescription();
+		auto simpleBind = SimpleVertex::getBindingDescription();
+		auto attr = Vertex::getAttributeDescriptions();
+		auto simpleAttr = SimpleVertex::getAttributeDescriptions();
+		createPipelineLayout();
+		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, graphicsPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()));
+		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, simpleGraphicsPipeline, simpleBind, std::vector<VkVertexInputAttributeDescription>(simpleAttr.begin(), simpleAttr.end()));
+
 		createCommandPool();
 		createDepthResources(offscreenExtent);
 		createOffscreenFrameBuffer();
@@ -1035,6 +1044,7 @@ private:
 		// create one descriptor set for each frame in flight, all with the same layout
 
 		size_t totalMaterials = materials.size();
+		std::cout << "total materials" << totalMaterials << "\n";
 		size_t totalBuffers = totalMaterials * MAX_FRAME_IN_FLIGHT;
 
 		std::vector<VkDescriptorSetLayout> layouts(totalBuffers, descriptorSetLayout);
@@ -1059,6 +1069,12 @@ private:
 				bufferInfo.offset = 0;
 				bufferInfo.range = sizeof(UniformBufferObject);
 
+				// give texture & normal map a default value if not using
+				VkDescriptorImageInfo defaultImageInfo{};
+				defaultImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				defaultImageInfo.imageView = defaultImageView;
+				defaultImageInfo.sampler = textureSampler;
+
 				VkDescriptorImageInfo cubemapImageInfo{};
 				cubemapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 				cubemapImageInfo.imageView = cubemapImageView;
@@ -1074,6 +1090,22 @@ private:
 				descriptorWrites[0].descriptorCount = 1;
 				descriptorWrites[0].pBufferInfo = &bufferInfo;
 
+				// initialize these two with default image view
+				descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+				descriptorWrites[1].dstSet = descriptorSet;
+				descriptorWrites[1].dstBinding = 1;
+				descriptorWrites[1].dstArrayElement = 0;
+				descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+				descriptorWrites[1].descriptorCount = 1;
+				descriptorWrites[1].pImageInfo = &defaultImageInfo;
+
+				descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+				descriptorWrites[2].dstSet = descriptorSet;
+				descriptorWrites[2].dstBinding = 2;
+				descriptorWrites[2].dstArrayElement = 0;
+				descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+				descriptorWrites[2].descriptorCount = 1;
+				descriptorWrites[2].pImageInfo = &defaultImageInfo;
 
 				if (std::holds_alternative<Lambertian>(material.materialType)) {
 					Lambertian& lambertian = std::get<Lambertian>(material.materialType);
@@ -1109,8 +1141,6 @@ private:
 					descriptorWrites[2].descriptorCount = 1;
 					descriptorWrites[2].pImageInfo = &normalmapImageInfo;
 				}
-
-
 
 				descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 				descriptorWrites[3].dstSet = descriptorSets[frame];
@@ -1176,7 +1206,7 @@ private:
 		// could be an array of ubo in terms of each bones in skeletal animation, i.e.
 		uboLayoutBinding.descriptorCount = 1;
 		// which shader stages the descriptor is going to be referenced
-		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
 		// for a combined image sampler descriptor
 		VkDescriptorSetLayoutBinding samplerLayoutBinding{};
@@ -1270,7 +1300,7 @@ private:
 		int materialIndex = sceneGraph.materialIndexMap.at(mesh.material);
 		const Material& material = sceneGraph.materials.at(materialIndex);
 		bool isSimple = std::holds_alternative<Simple>(material.materialType);
-		std::cout << isSimple << "\n";
+		std::cout << "isSimple:" << isSimple << "\n";
 
 		std::vector<Vertex> vertices;
 		std::vector<SimpleVertex> simpleVertices;
@@ -1281,15 +1311,14 @@ private:
 			bufferSize = sizeof(vertices[0]) * vertices.size();
 		}
 		else {
-			std::cout << "parsing simpleVertex" << "\n";
+			//std::cout << "parsing simpleVertex" << "\n";
 			simpleVertices = parseSimpleVertices(attr.src, mesh);
+			//printVertices(simpleVertices);
 			bufferSize = sizeof(simpleVertices[0]) * simpleVertices.size();
 		};
 
 		// vertex buffer only uses a host visible buffer as temporary buffer
 		// uses a device local one as actual vertex buffer
-
-
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
 		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
@@ -1320,6 +1349,15 @@ private:
 	void createVertexBuffersForAllMeshes(std::vector<Mesh>& meshes) {
 		for (Mesh& mesh : meshes) {
 			createVertexBuffer(mesh);
+		}
+	}
+
+	void printVertices(const std::vector<SimpleVertex>& vertices) {
+		for (const auto& vertex : vertices) {
+			std::cout << "Vertex Position: "
+				<< "X: " << vertex.pos.x << ", "
+				<< "Y: " << vertex.pos.y << ", "
+				<< "Z: " << vertex.pos.z << std::endl;
 		}
 	}
 
@@ -1474,11 +1512,10 @@ private:
 		renderPassInfo.pClearValues = clearValues.data();
 		vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
 
 		//  can only have a single index buffer
-		vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-
+		//vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 		VkViewport viewport{};
 		viewport.x = 0.0f;
 		viewport.y = 0.0f;
@@ -1503,7 +1540,6 @@ private:
 			glm::mat4 parentMatrix = glm::mat4(1.0f);
 			renderNode(rootNode, rootGlobalIndex, commandBuffer, currentFrame, parentMatrix);
 		}
-
 
 		//vkCmdDrawIndexed(commandBuffer, indices.size(), 1, 0, 0, 0);
 
@@ -1542,7 +1578,7 @@ private:
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
 		//  can only have a single index buffer
-		vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+		//vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
 		VkViewport viewport{};
 		viewport.x = 0.0f;
@@ -1580,7 +1616,6 @@ private:
 	}
 
 	void renderNode(const Node& node, const int& globalNodeIndex, VkCommandBuffer commandBuffer, int currentFrame, glm::mat4& parentMatrix) {
-
 
 		glm::mat4 modelMatrix;
 		int nodeIndex = sceneGraph.getNodeIndex(sceneGraph.nodes, node);
@@ -1628,12 +1663,15 @@ private:
 			}
 		}
 
-		// calculate matIndex
-		int materialIndex;
+		// calculate materialIndex
+		int materialIndex = 0;
+		Material material;
+		int materialType = 0;
 		if (node.mesh >= 0) {
-			int containerIndex = sceneGraph.meshIndexMap.at(node.mesh);
-			const Mesh& mesh = sceneGraph.meshes.at(containerIndex);
+			int meshContainerIndex = sceneGraph.meshIndexMap.at(node.mesh);
+			const Mesh& mesh = sceneGraph.meshes.at(meshContainerIndex);
 			materialIndex = sceneGraph.materialIndexMap.at(mesh.material);
+			material = sceneGraph.materials.at(materialIndex);
 		}
 
 		// calculate descriptor set index 
@@ -1644,16 +1682,19 @@ private:
 
 		// update ubo & push constants
 		pushConstants.model = modelMatrix;
-		pushConstants.materialType = 0;
+		pushConstants.materialType = materialType;
 		vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants), &pushConstants);
 		updateUniformBuffer(currentFrame, nodeIndex);
 
 		if (node.mesh >= 0) {
 
 			try {
+				if (materialType == 0) { vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, simpleGraphicsPipeline); }
+				else (vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline));
 
 				int containerIndex = sceneGraph.meshIndexMap.at(node.mesh);
 				const Mesh& mesh = sceneGraph.meshes.at(containerIndex);
+
 				VkBuffer buffers[] = { mesh.vertexBuffer };
 				VkDeviceSize offsets[] = { 0 };
 				vkCmdBindVertexBuffers(commandBuffer, 0, 1, buffers, offsets);
@@ -1819,11 +1860,16 @@ private:
 		}
 	}
 
-	void createGraphicsPipeline(VkExtent2D& extent, VkRenderPass& renderPass) {
+	void createGraphicsPipeline(VkExtent2D& extent, VkRenderPass& renderPass, VkPipeline& graphicsPipeline,
+		VkVertexInputBindingDescription& vertexBindingDescriptions,
+		const std::vector<VkVertexInputAttributeDescription>& vertexAttributeDescriptions)
+	{
+
 		auto vertShaderCode = readFile("shaders/vert.spv");
 		auto fragShaderCode = readFile("shaders/frag.spv");
-		auto bindingDescription = Vertex::getBindingDescription();
-		auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+		auto bindingDescription = vertexBindingDescriptions;
+		auto attributeDescriptions = vertexAttributeDescriptions;
 
 		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
 		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
@@ -1919,22 +1965,8 @@ private:
 		dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
 		dynamicState.pDynamicStates = dynamicStates.data();
 
-		VkPushConstantRange pushConstantRange{};
-		pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;;
-		pushConstantRange.offset = 0;
-		pushConstantRange.size = sizeof(glm::mat4) + sizeof(int);
-
-		// specify the descriptor set layout during pipeline creation, reference the layout object
-		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-		pipelineLayoutInfo.pushConstantRangeCount = 1;
-		pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
-		pipelineLayoutInfo.setLayoutCount = 1;
-		pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
-
-		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
-			throw std::runtime_error("failed to create pipeline layout!");
-		}
+		
+		
 
 		VkGraphicsPipelineCreateInfo pipelineInfo{};
 		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -1958,6 +1990,25 @@ private:
 
 		vkDestroyShaderModule(device, fragShaderModule, nullptr);
 		vkDestroyShaderModule(device, vertShaderModule, nullptr);
+	}
+
+	void createPipelineLayout() {
+		// specify the descriptor set layout during pipeline creation, reference the layout object
+		VkPushConstantRange pushConstantRange{};
+		pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;;
+		pushConstantRange.offset = 0;
+		pushConstantRange.size = sizeof(glm::mat4) + sizeof(int);
+
+		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		pipelineLayoutInfo.pushConstantRangeCount = 1;
+		pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+		pipelineLayoutInfo.setLayoutCount = 1;
+		pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+
+		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create pipeline layout!");
+		}
 	}
 
 	void createImageViews() {
@@ -2626,16 +2677,18 @@ private:
 
 		UniformBufferObject ubo{};
 
-		//printMatrix(modelMatrix);
+
 
 		if (isDebugCameraActive) {
 			ubo.view = debugCamera.GetViewMatrix();
 			ubo.projection = debugCamera.GetProjectionMatrix();
+			ubo.cameraPos = debugCamera.Position;
 
 		}
 		else if (isUserCameraActive) {
 			ubo.view = userCamera.GetViewMatrix();
 			ubo.projection = userCamera.GetProjectionMatrix();
+			ubo.cameraPos = userCamera.Position;
 		}
 		else if (isRenderCameraActive) {
 			Camera sceneCamera = cameras[0];
@@ -2645,6 +2698,7 @@ private:
 			renderCamera.AspectRatio = sceneCamera.perspective.aspect;
 			ubo.view = renderCamera.GetViewMatrix();
 			ubo.projection = renderCamera.GetProjectionMatrix();
+			ubo.cameraPos = renderCamera.Position;
 
 		}
 
@@ -2656,18 +2710,69 @@ private:
 
 	}
 
+	void cleanupTexture(Texture& texture) {
+		if (texture.imageView != VK_NULL_HANDLE) {
+			vkDestroyImageView(device, texture.imageView, nullptr);
+			texture.imageView = VK_NULL_HANDLE;
+		}
+		if (texture.image != VK_NULL_HANDLE) {
+			vkDestroyImage(device, texture.image, nullptr);
+			texture.image = VK_NULL_HANDLE;
+		}
+		if (texture.memory != VK_NULL_HANDLE) {
+			vkFreeMemory(device, texture.memory, nullptr);
+			texture.memory = VK_NULL_HANDLE;
+		}
+	}
+
+	void cleanupAllTextures(std::vector<Material>& materials) {
+		for (auto& material : materials) {
+			// clean normal maps (displacement
+			if (material.normalMap.image != VK_NULL_HANDLE) {
+				cleanupTexture(material.normalMap);
+			}
+			if (material.displacementMap.image != VK_NULL_HANDLE) {
+				cleanupTexture(material.displacementMap);
+			}
+
+			// clean PBR
+			if (std::holds_alternative<PBR>(material.materialType)) {
+				PBR& pbr = std::get<PBR>(material.materialType);
+				if (std::holds_alternative<Texture>(pbr.albedo)) {
+					Texture& tex = std::get<Texture>(pbr.albedo);
+					cleanupTexture(tex);
+				}
+				if (std::holds_alternative<Texture>(pbr.roughness)) {
+					Texture& tex = std::get<Texture>(pbr.roughness);
+					cleanupTexture(tex);
+				}
+				if (std::holds_alternative<Texture>(pbr.metalness)) {
+					Texture& tex = std::get<Texture>(pbr.metalness);
+					cleanupTexture(tex);
+				}
+			}
+			// clean Lambertian
+			else if (std::holds_alternative<Lambertian>(material.materialType)) {
+				Lambertian& lambertian = std::get<Lambertian>(material.materialType);
+				if (std::holds_alternative<Texture>(lambertian.baseColor)) {
+					Texture& tex = std::get<Texture>(lambertian.baseColor);
+					cleanupTexture(tex);
+				}
+			}
+		}
+	}
+
 	void cleanup() {
 
 		cleanupSwapChain();
 
 		vkDestroySampler(device, textureSampler, nullptr);
-		vkDestroyImageView(device, textureImageView, nullptr);
-		vkDestroyImage(device, textureImage, nullptr);
-		vkFreeMemory(device, textureImageMemory, nullptr);
 
-		vkDestroyImageView(device, normalmapImageView, nullptr);
-		vkDestroyImage(device, normalMap, nullptr);
-		vkFreeMemory(device, normalmapImageMemory, nullptr);
+		//cleanupAllTextures(materials);
+
+		vkDestroyImageView(device, defaultImageView, nullptr);
+		vkDestroyImage(device, defaultImage, nullptr);
+		vkFreeMemory(device, defaultImageMemory, nullptr);
 
 		vkDestroyImageView(device, cubemapImageView, nullptr);
 		vkDestroyImage(device, cubemap, nullptr);
@@ -2689,18 +2794,18 @@ private:
 			vkFreeMemory(device, mesh.vertexBufferMemory, nullptr);
 		}
 
-
 		for (int i = 0; i < MAX_FRAME_IN_FLIGHT; ++i) {
 			vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
 			vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
 			vkDestroyFence(device, inFlightFences[i], nullptr);
 		}
+
 		vkDestroyCommandPool(device, commandPool, nullptr);
 
 		vkDestroyPipeline(device, graphicsPipeline, nullptr);
+		vkDestroyPipeline(device, simpleGraphicsPipeline, nullptr);
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		vkDestroyRenderPass(device, swapChainRenderPass, nullptr);
-
 
 		vkDestroyDevice(device, nullptr);
 		vkDestroySurfaceKHR(instance, surface, nullptr);
