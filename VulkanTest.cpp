@@ -39,12 +39,17 @@
 // Written by Jasmine Chen, andrew id: zitongc
 // For 15-672 Realtime Rendering Graphics during Spring 2024, taught by Jim McCann
 // References: 
+// A1:
 // https://docs.vulkan.org/tutorial/latest/00_Introduction.html basically everything in initVulkan()
 // https://easyvulkan.github.io/ some supplement materials
 // https://stackoverflow.com/questions/5782658/extracting-yaw-from-a-quaternion convert quat to yaw and pitch
 // https://raytracing.github.io/books/RayTracingTheNextWeek.html#boundingvolumehierarchies/axis-alignedboundingboxes(aabbs) the inspiration of AABB bounding box
 // https://www.glfw.org/docs/latest/quick.html GLFW documentations
 // https://cplusplus.com/articles/DEN36Up4/ parse command line options
+// A2:
+// https://www.radiance-online.org/cgi-bin/viewcvs.cgi/ray/src/common/color.c?revision=2.33&view=markup#l188 convert rgbe to rgb
+// https://github.com/ixchow/15-466-ibl/blob/master/rgbe.hpp rgbe -> rgb
+
 
 uint32_t WIDTH = 1280;
 uint32_t HEIGHT = 720;
@@ -58,7 +63,7 @@ bool headless = false;
 struct CommandLineOptions {
 	bool headless = false;
 	std::string drawingSize;
-	std::string sceneFile = "./model/sphere.s72";
+	std::string sceneFile = "./model/test.s72";
 	std::string eventFile = "./model/events.txt";
 };
 
@@ -596,7 +601,7 @@ private:
 		auto simpleAttr = SimpleVertex::getAttributeDescriptions();
 		createPipelineLayout();
 		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, graphicsPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()));
-		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, simpleGraphicsPipeline, simpleBind, std::vector<VkVertexInputAttributeDescription>(simpleAttr.begin(), simpleAttr.end()));
+		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, simpleGraphicsPipeline, simpleBind, std::vector<VkVertexInputAttributeDescription>(simpleAttr.begin(), simpleAttr.end()), "shaders/simpleVert.spv", "shaders/simpleFrag.spv");
 
 		createCommandPool();
 
@@ -606,7 +611,7 @@ private:
 		loadAllTextures();
 
 		createCubemap(cubemap, cubemapImageMemory, environment.radiance.src);
-		cubemapImageView = createImageView(cubemap, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, 6, VK_IMAGE_VIEW_TYPE_CUBE);
+		cubemapImageView = createImageView(cubemap, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, 6, VK_IMAGE_VIEW_TYPE_CUBE);
 
 		createDepthResources(swapChainExtent);
 
@@ -710,9 +715,9 @@ private:
 		// load all six images and calculate total size
 		int texWidth, texHeight, texChannels;
 		std::string fullPath = "./model/" + imagePath;
-		stbi_uc* pixels = stbi_load(fullPath.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+		stbi_uc* rgbeData = stbi_load(fullPath.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 
-		if (!pixels) {
+		if (!rgbeData) {
 			std::cout << imagePath << "\n";
 			throw std::runtime_error("failed to load cubemap image strip!");
 		}
@@ -721,7 +726,19 @@ private:
 			throw std::runtime_error("Image strip doesn't have the correct dimensions for a cubemap!");
 		}
 
-		VkDeviceSize imageSize = texWidth * texHeight * 4;
+		VkDeviceSize imageSize = texWidth * texHeight * texChannels;
+
+		// decode rgbe and convert to rgb
+		glm::vec3* rgbData = new glm::vec3[texWidth * texHeight];
+
+		for (int i = 0; i < texWidth * texHeight; ++i) {
+			glm::u8vec4 col(rgbeData[i * 4], rgbeData[i * 4 + 1], rgbeData[i * 4 + 2], rgbeData[i * 4 + 3]);
+			rgbData[i] = rgbe_to_float(col);
+			
+			rgbeData[i * 4] = static_cast<unsigned char>(rgbData[i].r * 255);
+			rgbeData[i * 4 + 1] = static_cast<unsigned char>(rgbData[i].g * 255);
+			rgbeData[i * 4 + 2] = static_cast<unsigned char>(rgbData[i].b * 255);
+		}
 
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
@@ -729,20 +746,33 @@ private:
 
 		void* data;
 		vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
-		memcpy(data, pixels, static_cast<size_t>(imageSize));
+		memcpy(data, rgbeData, static_cast<size_t>(imageSize));
 		vkUnmapMemory(device, stagingBufferMemory);
 
-		stbi_image_free(pixels);
+		stbi_image_free(rgbeData);
+		delete[] rgbData;
 
-		createImage(texWidth, texHeight / 6, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, cubemapImage, cubemapImageMemory, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, 6);
-		transitionImageLayout(cubemapImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 6);
+		createImage(texWidth, texHeight / 6, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, cubemapImage, cubemapImageMemory, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, 6);
+		transitionImageLayout(cubemapImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 6);
 
 		copyBufferToImage(stagingBuffer, cubemapImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight / 6), 6);
-		transitionImageLayout(cubemapImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 6);
+		transitionImageLayout(cubemapImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 6);
 
 		// clean up buffer & memory
 		vkDestroyBuffer(device, stagingBuffer, nullptr);
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
+	}
+
+	glm::vec3 rgbe_to_float(glm::u8vec4 col) {
+		// process zero exponent
+		if (col == glm::u8vec4(0, 0, 0, 0)) return glm::vec3(0,0,0);
+
+		int exp = int(col.a) - 128;
+		return glm::vec3(
+			std::ldexp((col.r + 0.5f) / 256.0f, exp),
+			std::ldexp((col.g + 0.5f) / 256.0f, exp),
+			std::ldexp((col.b + 0.5f) / 256.0f, exp)
+		);
 	}
 
 	void createSampler(VkSampler& sampler) {
@@ -1862,11 +1892,12 @@ private:
 
 	void createGraphicsPipeline(VkExtent2D& extent, VkRenderPass& renderPass, VkPipeline& graphicsPipeline,
 		VkVertexInputBindingDescription& vertexBindingDescriptions,
-		const std::vector<VkVertexInputAttributeDescription>& vertexAttributeDescriptions)
+		const std::vector<VkVertexInputAttributeDescription>& vertexAttributeDescriptions,
+		std::string vertShader = "shaders/vert.spv", std::string fragShader = "shaders/frag.spv")
 	{
 
-		auto vertShaderCode = readFile("shaders/vert.spv");
-		auto fragShaderCode = readFile("shaders/frag.spv");
+		auto vertShaderCode = readFile(vertShader);
+		auto fragShaderCode = readFile(fragShader);
 
 		auto bindingDescription = vertexBindingDescriptions;
 		auto attributeDescriptions = vertexAttributeDescriptions;
@@ -1965,8 +1996,8 @@ private:
 		dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
 		dynamicState.pDynamicStates = dynamicStates.data();
 
-		
-		
+
+
 
 		VkGraphicsPipelineCreateInfo pipelineInfo{};
 		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
