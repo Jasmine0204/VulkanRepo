@@ -17,6 +17,7 @@
 #include <vector>
 #include <cstring>
 #include <optional>
+#include <variant>
 #include <set>
 #include <cstdint>
 #include <cstdlib>
@@ -67,7 +68,7 @@ const std::vector<Mesh>& meshes = sceneGraph.getMeshes();
 const std::vector<Node>& nodes = sceneGraph.getNodes();
 const std::vector<Camera>& cameras = sceneGraph.getCameras();
 const std::vector<AnimationClip>& clips = sceneGraph.getClips();
-const std::vector<Material>& materials = sceneGraph.getMaterials();
+std::vector<Material> materials = sceneGraph.getMaterials();
 const Scene& scene = sceneGraph.getScene();
 const Environment& environment = sceneGraph.getEnvironment();
 
@@ -278,7 +279,7 @@ struct BoundingBox {
 		bool isSimple = std::holds_alternative<Simple>(material.materialType);
 
 		if (!isSimple) {
-			std::vector<Vertex> vertices = parseVertices(attr.src, mesh); 
+			std::vector<Vertex> vertices = parseVertices(attr.src, mesh);
 			for (const auto& point : vertices) {
 				glm::vec4 worldPoint = modelMatrix * glm::vec4(point.pos, 1.0f); // traverse vertices to world
 				glm::vec3 transformedPoint = glm::vec3(worldPoint.x, worldPoint.y, worldPoint.z);
@@ -599,9 +600,8 @@ private:
 
 		createCommandPool();
 
-		createTextureImage(textureImage, textureImageMemory);
-		textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 		createSampler(textureSampler);
+		loadAllTextures();
 
 		createCubemap(cubemap, cubemapImageMemory, environment.radiance.src);
 		cubemapImageView = createImageView(cubemap, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, 6, VK_IMAGE_VIEW_TYPE_CUBE);
@@ -646,6 +646,54 @@ private:
 		createDescriptorSets();
 		createCommandBuffers(headlessCommandBuffers);
 		createSyncObjects();
+	}
+
+	void loadAllTextures() {
+		for (auto& material : materials) {
+			// load normal maps
+			if (!material.normalMap.src.empty()) {
+				material.normalMap = loadTexture(material.normalMap.src);
+			}
+			if (!material.displacementMap.src.empty()) {
+				material.displacementMap = loadTexture(material.displacementMap.src);
+			}
+
+			// load textures
+			if (std::holds_alternative<PBR>(material.materialType)) {
+				PBR& pbr = std::get<PBR>(material.materialType);
+				if (std::holds_alternative<Texture>(pbr.albedo)) {
+					Texture& tex = std::get<Texture>(pbr.albedo);
+					tex = loadTexture(tex.src);
+				}
+				if (std::holds_alternative<Texture>(pbr.roughness)) {
+					Texture& tex = std::get<Texture>(pbr.roughness);
+					tex = loadTexture(tex.src);
+				}
+				if (std::holds_alternative<Texture>(pbr.metalness)) {
+					Texture& tex = std::get<Texture>(pbr.metalness);
+					tex = loadTexture(tex.src);
+				}
+			}
+			else if (std::holds_alternative<Lambertian>(material.materialType)) {
+				Lambertian& lambertian = std::get<Lambertian>(material.materialType);
+				if (std::holds_alternative<Texture>(lambertian.baseColor)) {
+					Texture& tex = std::get<Texture>(lambertian.baseColor);
+					tex = loadTexture(tex.src);
+				}
+			}
+		}
+	}
+
+	Texture loadTexture(const std::string& fileName) {
+		Texture texture;
+		texture.src = fileName;
+
+		// put texture creation process together
+		createTextureImage(texture.image, texture.memory, fileName);
+		texture.imageView = createImageView(texture.image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
+		texture.sampler = textureSampler;
+
+		return texture;
 	}
 
 	void createCubemap(VkImage& cubemapImage, VkDeviceMemory& cubemapImageMemory, std::string imagePath) {
@@ -729,9 +777,10 @@ private:
 		}
 	}
 
-	void createTextureImage(VkImage& textureImage, VkDeviceMemory& textureImageMemory) {
+	void createTextureImage(VkImage& textureImage, VkDeviceMemory& textureImageMemory, std::string fileName) {
 		int texWidth, texHeight, texChannels;
-		stbi_uc* pixels = stbi_load("./model/pink.png", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+		std::string fullPath = "./model/" + fileName;
+		stbi_uc* pixels = stbi_load(fullPath.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 		VkDeviceSize imageSize = texWidth * texHeight * 4;
 
 		if (!pixels) {
@@ -984,7 +1033,9 @@ private:
 
 	void createDescriptorSets() {
 		// create one descriptor set for each frame in flight, all with the same layout
-		size_t totalBuffers = MAX_FRAME_IN_FLIGHT;
+
+		size_t totalMaterials = materials.size();
+		size_t totalBuffers = totalMaterials * MAX_FRAME_IN_FLIGHT;
 
 		std::vector<VkDescriptorSetLayout> layouts(totalBuffers, descriptorSetLayout);
 		VkDescriptorSetAllocateInfo allocInfo{};
@@ -998,76 +1049,80 @@ private:
 			throw std::runtime_error("failed to allocate descriptor sets!");
 		}
 
-		// add a loop to populate every descriptor
 		for (size_t frame = 0; frame < MAX_FRAME_IN_FLIGHT; frame++) {
+			for (size_t matIndex = 0; matIndex < materials.size(); matIndex++) {
+				Material& material = materials[matIndex];
+				VkDescriptorSet descriptorSet = descriptorSets[frame * materials.size() + matIndex];
 
-			// specifies the buffer and the region within it that contains the data for the descriptor
-			VkDescriptorBufferInfo bufferInfo{};
-			bufferInfo.buffer = uniformBuffers[frame];
-			bufferInfo.offset = 0;
-			bufferInfo.range = sizeof(UniformBufferObject);
+				VkDescriptorBufferInfo bufferInfo{};
+				bufferInfo.buffer = uniformBuffers[frame];
+				bufferInfo.offset = 0;
+				bufferInfo.range = sizeof(UniformBufferObject);
 
-			// bind the actual image and sampler resources
-			VkDescriptorImageInfo imageInfo{};
-			imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-			imageInfo.imageView = textureImageView;
-			imageInfo.sampler = textureSampler;
+				VkDescriptorImageInfo cubemapImageInfo{};
+				cubemapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				cubemapImageInfo.imageView = cubemapImageView;
+				cubemapImageInfo.sampler = textureSampler; // i use the same sampler for cubemap
 
-			VkDescriptorImageInfo normalmapImageInfo{};
-			imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-			imageInfo.imageView = normalmapImageView;
-			imageInfo.sampler = textureSampler;
+				std::array<VkWriteDescriptorSet, 4> descriptorWrites{};
 
-			VkDescriptorImageInfo cubemapImageInfo{};
-			cubemapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-			cubemapImageInfo.imageView = cubemapImageView;
-			cubemapImageInfo.sampler = textureSampler; // i use the same sampler
+				descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+				descriptorWrites[0].dstSet = descriptorSet;
+				descriptorWrites[0].dstBinding = 0;
+				descriptorWrites[0].dstArrayElement = 0;
+				descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+				descriptorWrites[0].descriptorCount = 1;
+				descriptorWrites[0].pBufferInfo = &bufferInfo;
 
-			// The configuration of descriptors is updated using the vkUpdateDescriptorSets
-			// takes an array of VkWriteDescriptorSet structs as parameter
-			std::array<VkWriteDescriptorSet, 4> descriptorWrites{};
 
-			descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			descriptorWrites[0].dstSet = descriptorSets[frame];
-			descriptorWrites[0].dstBinding = 0;
-			descriptorWrites[0].dstArrayElement = 0;
-			descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-			descriptorWrites[0].descriptorCount = 1;
-			descriptorWrites[0].pBufferInfo = &bufferInfo;
-			//descriptorWrite.pImageInfo = nullptr;
-			//descriptorWrite.pTexelBufferView = nullptr;
-			//pBufferInfo field is used for descriptors that refer to buffer data
-			//pImageInfo is used for descriptors that refer to image data
-			//pTexelBufferView is used for descriptors that refer to buffer views
+				if (std::holds_alternative<Lambertian>(material.materialType)) {
+					Lambertian& lambertian = std::get<Lambertian>(material.materialType);
+					if (std::holds_alternative<Texture>(lambertian.baseColor)) {
+						Texture& tex = std::get<Texture>(lambertian.baseColor);
+						VkDescriptorImageInfo imageInfo{};
+						imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+						imageInfo.imageView = tex.imageView;
+						imageInfo.sampler = tex.sampler;
 
-			descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			descriptorWrites[1].dstSet = descriptorSets[frame];
-			descriptorWrites[1].dstBinding = 1;
-			descriptorWrites[1].dstArrayElement = 0;
-			descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-			descriptorWrites[1].descriptorCount = 1;
-			descriptorWrites[1].pImageInfo = &imageInfo;
+						descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+						descriptorWrites[1].dstSet = descriptorSet;
+						descriptorWrites[1].dstBinding = 1;
+						descriptorWrites[1].dstArrayElement = 0;
+						descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+						descriptorWrites[1].descriptorCount = 1;
+						descriptorWrites[1].pImageInfo = &imageInfo;
+					}
+				}
+				// TODO pbr descriptor sets
 
-			descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			descriptorWrites[2].dstSet = descriptorSets[frame];
-			descriptorWrites[2].dstBinding = 2;
-			descriptorWrites[2].dstArrayElement = 0;
-			descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-			descriptorWrites[2].descriptorCount = 1;
-			descriptorWrites[2].pImageInfo = &cubemapImageInfo;
-			
-			descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			descriptorWrites[3].dstSet = descriptorSets[frame];
-			descriptorWrites[3].dstBinding = 3;
-			descriptorWrites[3].dstArrayElement = 0;
-			descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-			descriptorWrites[3].descriptorCount = 1;
-			descriptorWrites[3].pImageInfo = &cubemapImageInfo;
+				if (!material.normalMap.src.empty()) {
+					VkDescriptorImageInfo normalmapImageInfo{};
+					normalmapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+					normalmapImageInfo.imageView = material.normalMap.imageView;
+					normalmapImageInfo.sampler = material.normalMap.sampler;
 
-			vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+					descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+					descriptorWrites[2].dstSet = descriptorSet;
+					descriptorWrites[2].dstBinding = 2;
+					descriptorWrites[2].dstArrayElement = 0;
+					descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+					descriptorWrites[2].descriptorCount = 1;
+					descriptorWrites[2].pImageInfo = &normalmapImageInfo;
+				}
 
+
+
+				descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+				descriptorWrites[3].dstSet = descriptorSets[frame];
+				descriptorWrites[3].dstBinding = 3;
+				descriptorWrites[3].dstArrayElement = 0;
+				descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+				descriptorWrites[3].descriptorCount = 1;
+				descriptorWrites[3].pImageInfo = &cubemapImageInfo;
+
+				vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+			}
 		}
-
 	}
 
 	void createDescriptorPool() {
@@ -1573,10 +1628,19 @@ private:
 			}
 		}
 
+		// calculate matIndex
+		int materialIndex;
+		if (node.mesh >= 0) {
+			int containerIndex = sceneGraph.meshIndexMap.at(node.mesh);
+			const Mesh& mesh = sceneGraph.meshes.at(containerIndex);
+			materialIndex = sceneGraph.materialIndexMap.at(mesh.material);
+		}
+
+		// calculate descriptor set index 
+		int descriptorSetIndex = currentFrame * materials.size() + materialIndex;
 
 		// bind descriptor
-		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
-
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[descriptorSetIndex], 0, nullptr);
 
 		// update ubo & push constants
 		pushConstants.model = modelMatrix;

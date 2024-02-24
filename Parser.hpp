@@ -45,6 +45,10 @@ struct Environment {
 
 struct Texture {
 	std::string src;
+	VkImage image;
+	VkDeviceMemory memory;
+	VkImageView imageView;
+	VkSampler sampler;
 };
 
 using ColorOrTexture = std::variant<glm::vec3, Texture>;
