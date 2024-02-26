@@ -611,7 +611,7 @@ private:
 		loadAllTextures();
 
 		createCubemap(cubemap, cubemapImageMemory, environment.radiance.src);
-		cubemapImageView = createImageView(cubemap, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, 6, VK_IMAGE_VIEW_TYPE_CUBE);
+		cubemapImageView = createImageView(cubemap, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 6, VK_IMAGE_VIEW_TYPE_CUBE);
 
 		createDepthResources(swapChainExtent);
 
@@ -715,9 +715,9 @@ private:
 		// load all six images and calculate total size
 		int texWidth, texHeight, texChannels;
 		std::string fullPath = "./model/" + imagePath;
-		stbi_uc* rgbeData = stbi_load(fullPath.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+		stbi_uc* pixel = stbi_load(fullPath.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 
-		if (!rgbeData) {
+		if (!pixel) {
 			std::cout << imagePath << "\n";
 			throw std::runtime_error("failed to load cubemap image strip!");
 		}
@@ -726,18 +726,14 @@ private:
 			throw std::runtime_error("Image strip doesn't have the correct dimensions for a cubemap!");
 		}
 
-		VkDeviceSize imageSize = texWidth * texHeight * texChannels;
+		VkDeviceSize imageSize = texWidth * texHeight * sizeof(glm::vec4);
 
 		// decode rgbe and convert to rgb
-		glm::vec3* rgbData = new glm::vec3[texWidth * texHeight];
+		glm::vec4* rgbData = new glm::vec4[texWidth * texHeight];
 
 		for (int i = 0; i < texWidth * texHeight; ++i) {
-			glm::u8vec4 col(rgbeData[i * 4], rgbeData[i * 4 + 1], rgbeData[i * 4 + 2], rgbeData[i * 4 + 3]);
+			glm::u8vec4 col(pixel[i * 4], pixel[i * 4 + 1], pixel[i * 4 + 2], pixel[i * 4 + 3]);
 			rgbData[i] = rgbe_to_float(col);
-			
-			rgbeData[i * 4] = static_cast<unsigned char>(rgbData[i].r * 255);
-			rgbeData[i * 4 + 1] = static_cast<unsigned char>(rgbData[i].g * 255);
-			rgbeData[i * 4 + 2] = static_cast<unsigned char>(rgbData[i].b * 255);
 		}
 
 		VkBuffer stagingBuffer;
@@ -746,32 +742,33 @@ private:
 
 		void* data;
 		vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
-		memcpy(data, rgbeData, static_cast<size_t>(imageSize));
+		memcpy(data, rgbData, static_cast<size_t>(imageSize));
 		vkUnmapMemory(device, stagingBufferMemory);
 
-		stbi_image_free(rgbeData);
+		stbi_image_free(pixel);
 		delete[] rgbData;
 
-		createImage(texWidth, texHeight / 6, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, cubemapImage, cubemapImageMemory, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, 6);
-		transitionImageLayout(cubemapImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 6);
+		createImage(texWidth, texHeight / 6, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, cubemapImage, cubemapImageMemory, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, 6);
+		transitionImageLayout(cubemapImage, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 6);
 
 		copyBufferToImage(stagingBuffer, cubemapImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight / 6), 6);
-		transitionImageLayout(cubemapImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 6);
+		transitionImageLayout(cubemapImage, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 6);
 
 		// clean up buffer & memory
 		vkDestroyBuffer(device, stagingBuffer, nullptr);
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
 	}
 
-	glm::vec3 rgbe_to_float(glm::u8vec4 col) {
+	glm::vec4 rgbe_to_float(glm::u8vec4 col) {
 		// process zero exponent
-		if (col == glm::u8vec4(0, 0, 0, 0)) return glm::vec3(0,0,0);
+		if (col == glm::u8vec4(0, 0, 0, 0)) return glm::vec4(0,0,0,0);
 
 		int exp = int(col.a) - 128;
-		return glm::vec3(
+		return glm::vec4(
 			std::ldexp((col.r + 0.5f) / 256.0f, exp),
 			std::ldexp((col.g + 0.5f) / 256.0f, exp),
-			std::ldexp((col.b + 0.5f) / 256.0f, exp)
+			std::ldexp((col.b + 0.5f) / 256.0f, exp),
+			1.0f
 		);
 	}
 
