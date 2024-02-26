@@ -49,7 +49,10 @@
 // A2:
 // https://www.radiance-online.org/cgi-bin/viewcvs.cgi/ray/src/common/color.c?revision=2.33&view=markup#l188 convert rgbe to rgb
 // https://github.com/ixchow/15-466-ibl/blob/master/rgbe.hpp rgbe -> rgb
-
+// https://learnopengl.com/Advanced-Lighting/HDR hdr & tone-mapping
+// https://64.github.io/tonemapping/ tone-mapping
+// https://gist.github.com/Pikachuxxxx/136940d6d0d64074aba51246f514bd26 tone-mapping in fragment shader
+// https://en.wikipedia.org/wiki/Relative_luminance adjust vibrance after tone-mapping
 
 uint32_t WIDTH = 1280;
 uint32_t HEIGHT = 720;
@@ -143,17 +146,17 @@ std::vector<Vertex> parseVertices(const std::string fileName, const Mesh& mesh) 
 
 		// parse color
 		int colorStride = colorAttr.stride;
-		size_t colorOffset = i * colorStride + colorAttr.offset;
-		if (colorOffset + sizeof(uint32_t) > verticesBuffer.size()) {
+		offset = i * colorStride + colorAttr.offset;
+
+		uint32_t color;
+		if (offset + sizeof(color) > verticesBuffer.size()) {
 			throw std::runtime_error("Color data exceeds buffer limits");
 		}
 
-		uint8_t r, g, b, a;
-		memcpy(&r, verticesBuffer.data() + colorOffset, sizeof(uint8_t));
-		memcpy(&g, verticesBuffer.data() + colorOffset + 1, sizeof(uint8_t));
-		memcpy(&b, verticesBuffer.data() + colorOffset + 2, sizeof(uint8_t));
-		memcpy(&a, verticesBuffer.data() + colorOffset + 3, sizeof(uint8_t));
-		vertex.color = glm::vec4(r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f);
+		memcpy(&vertex.color.r, verticesBuffer.data() + offset, sizeof(uint32_t)); // R
+		memcpy(&vertex.color.g, verticesBuffer.data() + offset + 4, sizeof(uint32_t)); // G
+		memcpy(&vertex.color.b, verticesBuffer.data() + offset + 8, sizeof(uint32_t)); // B
+		memcpy(&vertex.color.a, verticesBuffer.data() + offset + 12, sizeof(uint32_t)); // A
 
 		vertices.push_back(vertex);
 	}
@@ -185,17 +188,16 @@ std::vector<SimpleVertex> parseSimpleVertices(const std::string fileName, const 
 		memcpy(&simpleVertex.normal, verticesBuffer.data() + normalOffset, sizeof(simpleVertex.normal));
 
 		// parse color
-		size_t colorOffset = i * 28 + 24;
-		if (colorOffset + sizeof(uint32_t) > verticesBuffer.size()) {
+		uint32_t color;
+		size_t offset = i * 28 + 24;
+		if (offset + sizeof(color) > verticesBuffer.size()) {
 			throw std::runtime_error("Color data exceeds buffer limits");
 		}
 
-		uint8_t r, g, b, a;
-		memcpy(&r, verticesBuffer.data() + colorOffset, sizeof(uint8_t));
-		memcpy(&g, verticesBuffer.data() + colorOffset + 1, sizeof(uint8_t));
-		memcpy(&b, verticesBuffer.data() + colorOffset + 2, sizeof(uint8_t));
-		memcpy(&a, verticesBuffer.data() + colorOffset + 3, sizeof(uint8_t));
-		simpleVertex.color = glm::vec4(r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f);
+		memcpy(&simpleVertex.color.r, verticesBuffer.data() + offset, sizeof(uint32_t)); // R
+		memcpy(&simpleVertex.color.g, verticesBuffer.data() + offset + 4, sizeof(uint32_t)); // G
+		memcpy(&simpleVertex.color.b, verticesBuffer.data() + offset + 8, sizeof(uint32_t)); // B
+		memcpy(&simpleVertex.color.a, verticesBuffer.data() + offset + 12, sizeof(uint32_t)); // A
 
 		simpleVertices.push_back(simpleVertex);
 	}
@@ -600,7 +602,7 @@ private:
 		auto simpleBind = SimpleVertex::getBindingDescription();
 		auto simpleAttr = SimpleVertex::getAttributeDescriptions();
 		createPipelineLayout();
-		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, graphicsPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()));
+		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, graphicsPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()), "shaders/vert.spv", "shaders/frag.spv");
 		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, simpleGraphicsPipeline, simpleBind, std::vector<VkVertexInputAttributeDescription>(simpleAttr.begin(), simpleAttr.end()), "shaders/simpleVert.spv", "shaders/simpleFrag.spv");
 
 		createCommandPool();
@@ -647,8 +649,8 @@ private:
 		auto attr = Vertex::getAttributeDescriptions();
 		auto simpleAttr = SimpleVertex::getAttributeDescriptions();
 		createPipelineLayout();
-		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, graphicsPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()));
-		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, simpleGraphicsPipeline, simpleBind, std::vector<VkVertexInputAttributeDescription>(simpleAttr.begin(), simpleAttr.end()));
+		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, graphicsPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()), "shaders/vert.spv", "shaders/frag.spv");
+		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, simpleGraphicsPipeline, simpleBind, std::vector<VkVertexInputAttributeDescription>(simpleAttr.begin(), simpleAttr.end()), "shaders/simpleVert.spv", "shaders/simpleFrag.spv");
 
 		createCommandPool();
 		createDepthResources(offscreenExtent);
@@ -761,7 +763,7 @@ private:
 
 	glm::vec4 rgbe_to_float(glm::u8vec4 col) {
 		// process zero exponent
-		if (col == glm::u8vec4(0, 0, 0, 0)) return glm::vec4(0,0,0,0);
+		if (col == glm::u8vec4(0, 0, 0, 0)) return glm::vec4(0, 0, 0, 0);
 
 		int exp = int(col.a) - 128;
 		return glm::vec4(
@@ -1338,7 +1340,7 @@ private:
 			bufferSize = sizeof(vertices[0]) * vertices.size();
 		}
 		else {
-			//std::cout << "parsing simpleVertex" << "\n";
+			std::cout << "parsing simpleVertex" << "\n";
 			simpleVertices = parseSimpleVertices(attr.src, mesh);
 			//printVertices(simpleVertices);
 			bufferSize = sizeof(simpleVertices[0]) * simpleVertices.size();
@@ -1699,6 +1701,7 @@ private:
 			const Mesh& mesh = sceneGraph.meshes.at(meshContainerIndex);
 			materialIndex = sceneGraph.materialIndexMap.at(mesh.material);
 			material = sceneGraph.materials.at(materialIndex);
+			materialType = material.getMaterialType();
 		}
 
 		// calculate descriptor set index 
@@ -1890,7 +1893,7 @@ private:
 	void createGraphicsPipeline(VkExtent2D& extent, VkRenderPass& renderPass, VkPipeline& graphicsPipeline,
 		VkVertexInputBindingDescription& vertexBindingDescriptions,
 		const std::vector<VkVertexInputAttributeDescription>& vertexAttributeDescriptions,
-		std::string vertShader = "shaders/vert.spv", std::string fragShader = "shaders/frag.spv")
+		std::string vertShader, std::string fragShader)
 	{
 
 		auto vertShaderCode = readFile(vertShader);

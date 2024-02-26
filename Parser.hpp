@@ -73,6 +73,19 @@ struct Material {
 	bool isSimple() const {
 		return std::holds_alternative<Simple>(materialType);
 	}
+
+	// get material type int
+	int getMaterialType() const {
+		return std::visit([](const auto& arg) -> int {
+			using T = std::decay_t<decltype(arg)>;
+			if constexpr (std::is_same_v<T, Simple>) return 0; // simple
+			else if constexpr (std::is_same_v<T, Lambertian>) return 1; // diffuse
+			else if constexpr (std::is_same_v<T, Mirror>) return 2; // mirror
+			else if constexpr (std::is_same_v<T, Environment>) return 3; // environment (not gonna use tho
+			else if constexpr (std::is_same_v<T, PBR>) return 4; //  PBR
+			else return -1;
+			}, materialType);
+	}
 };
 
 
@@ -175,17 +188,17 @@ struct SimpleVertex {
 		attributeDescriptions[0].binding = 0;
 		attributeDescriptions[0].location = 0;
 		attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-		attributeDescriptions[0].offset = offsetof(Vertex, pos);
+		attributeDescriptions[0].offset = offsetof(SimpleVertex, pos);
 
 		attributeDescriptions[1].binding = 0;
 		attributeDescriptions[1].location = 1;
 		attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-		attributeDescriptions[1].offset = offsetof(Vertex, normal);
+		attributeDescriptions[1].offset = offsetof(SimpleVertex, normal);
 
 		attributeDescriptions[2].binding = 0;
 		attributeDescriptions[2].location = 2;
 		attributeDescriptions[2].format = VK_FORMAT_R8G8B8A8_UNORM;
-		attributeDescriptions[2].offset = offsetof(Vertex, color);
+		attributeDescriptions[2].offset = offsetof(SimpleVertex, color);
 
 		return attributeDescriptions;
 	}
