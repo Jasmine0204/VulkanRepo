@@ -34,10 +34,19 @@ vec3 adjustSaturation(vec3 color, float saturation) {
 
 void main() {
     vec3 normal = fragNorm;
+    vec3 envColor;
+
+    if(pushConstants.materialType == 2)
+    {
     vec3 viewDir = normalize(ubo.cameraPos - fragPos);
     vec3 reflectDir = reflect(viewDir, normal);
+    envColor = texture(envMap, -reflectDir).rgb;
+    } else if (pushConstants.materialType == 0)
+    {
+    envColor = texture(envMap, normal).rgb;
+    }
+   
 
-    vec3 envColor = texture(envMap, reflectDir).rgb;
     vec3 ldrColor = toneMappingFilmic(envColor); 
     ldrColor = adjustSaturation(ldrColor, 1.2);
 

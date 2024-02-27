@@ -53,6 +53,7 @@
 // https://64.github.io/tonemapping/ tone-mapping
 // https://gist.github.com/Pikachuxxxx/136940d6d0d64074aba51246f514bd26 tone-mapping in fragment shader
 // https://en.wikipedia.org/wiki/Relative_luminance adjust vibrance after tone-mapping
+// https://architextures.org/textures free educational use textures
 
 uint32_t WIDTH = 1280;
 uint32_t HEIGHT = 720;
@@ -66,7 +67,7 @@ bool headless = false;
 struct CommandLineOptions {
 	bool headless = false;
 	std::string drawingSize;
-	std::string sceneFile = "./model/test.s72";
+	std::string sceneFile = "./model/env-cube.s72";
 	std::string eventFile = "./model/events.txt";
 };
 
@@ -106,57 +107,49 @@ std::vector<Vertex> parseVertices(const std::string fileName, const Mesh& mesh) 
 
 	size_t numVertices = mesh.count;
 
-	Attribute positionAttr = mesh.getAttribute("POSITION");
-	Attribute normalAttr = mesh.getAttribute("NORMAL");
-	Attribute tangentAttr = mesh.getAttribute("TANGENT");
-	Attribute texcoordAttr = mesh.getAttribute("TEXCOORD");
-	Attribute colorAttr = mesh.getAttribute("COLOR");
-
 	for (size_t i = 0; i < numVertices; ++i) {
 		Vertex vertex;
 
 		// parse position
-		int stride = positionAttr.stride;
-		size_t offset = i * stride + positionAttr.offset;
-		if (offset + sizeof(vertex.pos) > verticesBuffer.size()) {
+		size_t positionOffset = i * 52;
+		if (positionOffset + sizeof(vertex.pos) > verticesBuffer.size()) {
 			throw std::runtime_error("Position data exceeds buffer limits");
 		}
-		memcpy(&vertex.pos, verticesBuffer.data() + positionAttr.offset, sizeof(vertex.pos));
+		memcpy(&vertex.pos, verticesBuffer.data() + positionOffset, sizeof(vertex.pos));
 
 		// parse normal
-		offset = i * normalAttr.stride + normalAttr.offset;
-		if (offset + sizeof(vertex.normal) > verticesBuffer.size()) {
+		size_t normalOffset = i * 52 + 12;
+		if (normalOffset + sizeof(vertex.normal) > verticesBuffer.size()) {
 			throw std::runtime_error("Normal data exceeds buffer limits");
 		}
-		memcpy(&vertex.normal, verticesBuffer.data() + normalAttr.offset, sizeof(vertex.normal));
+		memcpy(&vertex.normal, verticesBuffer.data() + normalOffset, sizeof(vertex.normal));
 
 		// parse tangent
-		offset = i * tangentAttr.stride + tangentAttr.offset;
-		if (offset + sizeof(vertex.tangent) > verticesBuffer.size()) {
+		size_t tangentOffset = i * 52 + 24;
+		if (tangentOffset + sizeof(vertex.tangent) > verticesBuffer.size()) {
 			throw std::runtime_error("tangent data exceeds buffer limits");
 		}
-		memcpy(&vertex.tangent, verticesBuffer.data() + tangentAttr.offset, sizeof(vertex.tangent));
+		memcpy(&vertex.tangent, verticesBuffer.data() + tangentOffset, sizeof(vertex.tangent));
 
 		// parse texcoord
-		offset = i * texcoordAttr.stride + texcoordAttr.offset;
-		if (offset + sizeof(vertex.texCoord) > verticesBuffer.size()) {
+		size_t texOffset = i * 52 + 40;
+		if (texOffset + sizeof(vertex.texCoord) > verticesBuffer.size()) {
 			throw std::runtime_error("texcoord data exceeds buffer limits");
 		}
-		memcpy(&vertex.texCoord, verticesBuffer.data() + texcoordAttr.offset, sizeof(vertex.texCoord));
+		memcpy(&vertex.texCoord, verticesBuffer.data() + texOffset, sizeof(vertex.texCoord));
 
 		// parse color
-		int colorStride = colorAttr.stride;
-		offset = i * colorStride + colorAttr.offset;
+		size_t colorOffset = i * 52 + 48;
 
 		uint32_t color;
-		if (offset + sizeof(color) > verticesBuffer.size()) {
+		if (colorOffset + sizeof(color) > verticesBuffer.size()) {
 			throw std::runtime_error("Color data exceeds buffer limits");
 		}
 
-		memcpy(&vertex.color.r, verticesBuffer.data() + offset, sizeof(uint32_t)); // R
-		memcpy(&vertex.color.g, verticesBuffer.data() + offset + 4, sizeof(uint32_t)); // G
-		memcpy(&vertex.color.b, verticesBuffer.data() + offset + 8, sizeof(uint32_t)); // B
-		memcpy(&vertex.color.a, verticesBuffer.data() + offset + 12, sizeof(uint32_t)); // A
+		memcpy(&vertex.color.r, verticesBuffer.data() + colorOffset, sizeof(uint32_t)); // R
+		memcpy(&vertex.color.g, verticesBuffer.data() + colorOffset + 4, sizeof(uint32_t)); // G
+		memcpy(&vertex.color.b, verticesBuffer.data() + colorOffset + 8, sizeof(uint32_t)); // B
+		memcpy(&vertex.color.a, verticesBuffer.data() + colorOffset + 12, sizeof(uint32_t)); // A
 
 		vertices.push_back(vertex);
 	}
@@ -189,15 +182,15 @@ std::vector<SimpleVertex> parseSimpleVertices(const std::string fileName, const 
 
 		// parse color
 		uint32_t color;
-		size_t offset = i * 28 + 24;
-		if (offset + sizeof(color) > verticesBuffer.size()) {
+		size_t colorOffset = i * 28 + 24;
+		if (colorOffset + sizeof(color) > verticesBuffer.size()) {
 			throw std::runtime_error("Color data exceeds buffer limits");
 		}
 
-		memcpy(&simpleVertex.color.r, verticesBuffer.data() + offset, sizeof(uint32_t)); // R
-		memcpy(&simpleVertex.color.g, verticesBuffer.data() + offset + 4, sizeof(uint32_t)); // G
-		memcpy(&simpleVertex.color.b, verticesBuffer.data() + offset + 8, sizeof(uint32_t)); // B
-		memcpy(&simpleVertex.color.a, verticesBuffer.data() + offset + 12, sizeof(uint32_t)); // A
+		memcpy(&simpleVertex.color.r, verticesBuffer.data() + colorOffset, sizeof(uint32_t)); // R
+		memcpy(&simpleVertex.color.g, verticesBuffer.data() + colorOffset + 4, sizeof(uint32_t)); // G
+		memcpy(&simpleVertex.color.b, verticesBuffer.data() + colorOffset + 8, sizeof(uint32_t)); // B
+		memcpy(&simpleVertex.color.a, verticesBuffer.data() + colorOffset + 12, sizeof(uint32_t)); // A
 
 		simpleVertices.push_back(simpleVertex);
 	}
@@ -279,7 +272,7 @@ struct BoundingBox {
 
 		int materialIndex = sceneGraph.materialIndexMap.at(mesh.material);
 		const Material& material = sceneGraph.materials.at(materialIndex);
-		bool isSimple = std::holds_alternative<Simple>(material.materialType);
+		bool isSimple = (material.getMaterialType() == 0);
 
 		if (!isSimple) {
 			std::vector<Vertex> vertices = parseVertices(attr.src, mesh);
@@ -624,7 +617,6 @@ private:
 
 		createUniformBuffer();
 
-
 		createDescriptorPool();
 		createDescriptorSets();
 
@@ -692,8 +684,8 @@ private:
 			}
 			else if (std::holds_alternative<Lambertian>(material.materialType)) {
 				Lambertian& lambertian = std::get<Lambertian>(material.materialType);
-				if (std::holds_alternative<Texture>(lambertian.baseColor)) {
-					Texture& tex = std::get<Texture>(lambertian.baseColor);
+				if (std::holds_alternative<Texture>(lambertian.albedo)) {
+					Texture& tex = std::get<Texture>(lambertian.albedo);
 					tex = loadTexture(tex.src);
 				}
 			}
@@ -1070,7 +1062,7 @@ private:
 	}
 
 	void createDescriptorSets() {
-		// create one descriptor set for each frame in flight, all with the same layout
+		// create one descriptor set for each material in each frame in flight, all with the same layout
 
 		size_t totalMaterials = materials.size();
 		std::cout << "total materials" << totalMaterials << "\n";
@@ -1138,8 +1130,8 @@ private:
 
 				if (std::holds_alternative<Lambertian>(material.materialType)) {
 					Lambertian& lambertian = std::get<Lambertian>(material.materialType);
-					if (std::holds_alternative<Texture>(lambertian.baseColor)) {
-						Texture& tex = std::get<Texture>(lambertian.baseColor);
+					if (std::holds_alternative<Texture>(lambertian.albedo)) {
+						Texture& tex = std::get<Texture>(lambertian.albedo);
 						VkDescriptorImageInfo imageInfo{};
 						imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 						imageInfo.imageView = tex.imageView;
@@ -1186,21 +1178,24 @@ private:
 
 	void createDescriptorPool() {
 		//  allocate one of these descriptors for every frame
+		size_t totalMaterials = materials.size();
 		std::array<VkDescriptorPoolSize, 4> poolSizes{};
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT);
+		poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
 		poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT);
+		poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
 		poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[2].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT);
+		poolSizes[2].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
 		poolSizes[3].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[3].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT);
+		poolSizes[3].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
+
+
 
 		VkDescriptorPoolCreateInfo poolInfo{};
 		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 		poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
 		poolInfo.pPoolSizes = poolSizes.data();
-		poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT);
+		poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * 4);
 
 		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create descriptor pool!");
@@ -1229,6 +1224,7 @@ private:
 
 	void createDescriptorSetLayout() {
 		// every binding needs to be described through a VkDescriptorSetLayoutBinding struct
+		// ubo
 		VkDescriptorSetLayoutBinding uboLayoutBinding{};
 		uboLayoutBinding.binding = 0;
 		uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -1237,7 +1233,7 @@ private:
 		// which shader stages the descriptor is going to be referenced
 		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-		// for a combined image sampler descriptor
+		// albedo
 		VkDescriptorSetLayoutBinding samplerLayoutBinding{};
 		samplerLayoutBinding.binding = 1;
 		samplerLayoutBinding.descriptorCount = 1;
@@ -1328,8 +1324,7 @@ private:
 
 		int materialIndex = sceneGraph.materialIndexMap.at(mesh.material);
 		const Material& material = sceneGraph.materials.at(materialIndex);
-		bool isSimple = std::holds_alternative<Simple>(material.materialType);
-		std::cout << "isSimple:" << isSimple << "\n";
+		bool isSimple = (material.getMaterialType() == 0);
 
 		std::vector<Vertex> vertices;
 		std::vector<SimpleVertex> simpleVertices;
@@ -1337,12 +1332,13 @@ private:
 
 		if (!isSimple) {
 			vertices = parseVertices(attr.src, mesh);
+			//printVertices(vertices);
 			bufferSize = sizeof(vertices[0]) * vertices.size();
+			std::cout << "parsing Vertex" << "\n";
 		}
 		else {
 			std::cout << "parsing simpleVertex" << "\n";
 			simpleVertices = parseSimpleVertices(attr.src, mesh);
-			//printVertices(simpleVertices);
 			bufferSize = sizeof(simpleVertices[0]) * simpleVertices.size();
 		};
 
@@ -1381,12 +1377,12 @@ private:
 		}
 	}
 
-	void printVertices(const std::vector<SimpleVertex>& vertices) {
+	void printVertices(const std::vector<Vertex>& vertices) {
 		for (const auto& vertex : vertices) {
 			std::cout << "Vertex Position: "
-				<< "X: " << vertex.pos.x << ", "
-				<< "Y: " << vertex.pos.y << ", "
-				<< "Z: " << vertex.pos.z << std::endl;
+				<< "X: " << vertex.texCoord.x << ", "
+				<< "Y: " << vertex.texCoord.y << ", ";
+			//<< "Z: " << vertex.pos.z << std::endl;
 		}
 	}
 
@@ -1559,9 +1555,6 @@ private:
 		scissor.extent = swapChainExtent;
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-		// specify if we want to bind descriptor sets to the graphics or compute pipeline
-		//size_t totalBuffers = sceneGraph.meshes.size() * MAX_FRAME_IN_FLIGHT;
-
 		// render frame
 		for (int rootGlobalIndex : sceneGraph.parsedScene.roots) {
 			int containerIndex = sceneGraph.globalNodeIndexMap.at(rootGlobalIndex); // directly get rootGlobalIndex
@@ -1604,7 +1597,7 @@ private:
 		renderPassInfo.pClearValues = clearValues.data();
 		vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+		//vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
 		//  can only have a single index buffer
 		//vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
@@ -1720,7 +1713,9 @@ private:
 
 			try {
 				if (materialType == 0) { vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, simpleGraphicsPipeline); }
-				else (vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline));
+				else {
+					vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+				};
 
 				int containerIndex = sceneGraph.meshIndexMap.at(node.mesh);
 				const Mesh& mesh = sceneGraph.meshes.at(containerIndex);
@@ -1995,9 +1990,6 @@ private:
 		dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
 		dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
 		dynamicState.pDynamicStates = dynamicStates.data();
-
-
-
 
 		VkGraphicsPipelineCreateInfo pipelineInfo{};
 		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -2708,8 +2700,6 @@ private:
 
 		UniformBufferObject ubo{};
 
-
-
 		if (isDebugCameraActive) {
 			ubo.view = debugCamera.GetViewMatrix();
 			ubo.projection = debugCamera.GetProjectionMatrix();
@@ -2734,7 +2724,7 @@ private:
 		}
 
 		ubo.projection[1][1] *= -1;
-		//printMatrix(modelMatrix);
+
 		// GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted;
 
 		memcpy(uniformBuffersMapped[currentFrame], &ubo, sizeof(ubo)); //we only map the uniform buffer once
@@ -2758,36 +2748,39 @@ private:
 
 	void cleanupAllTextures(std::vector<Material>& materials) {
 		for (auto& material : materials) {
-			// clean normal maps (displacement
-			if (material.normalMap.image != VK_NULL_HANDLE) {
-				cleanupTexture(material.normalMap);
-			}
-			if (material.displacementMap.image != VK_NULL_HANDLE) {
-				cleanupTexture(material.displacementMap);
-			}
-
-			// clean PBR
-			if (std::holds_alternative<PBR>(material.materialType)) {
-				PBR& pbr = std::get<PBR>(material.materialType);
-				if (std::holds_alternative<Texture>(pbr.albedo)) {
-					Texture& tex = std::get<Texture>(pbr.albedo);
-					cleanupTexture(tex);
+			int materialType = material.getMaterialType();
+			if (materialType != 0) {
+				// clean normal maps (displacement
+				if (material.normalMap.image != VK_NULL_HANDLE) {
+					cleanupTexture(material.normalMap);
 				}
-				if (std::holds_alternative<Texture>(pbr.roughness)) {
-					Texture& tex = std::get<Texture>(pbr.roughness);
-					cleanupTexture(tex);
-				}
-				if (std::holds_alternative<Texture>(pbr.metalness)) {
-					Texture& tex = std::get<Texture>(pbr.metalness);
-					cleanupTexture(tex);
-				}
-			}
-			// clean Lambertian
-			else if (std::holds_alternative<Lambertian>(material.materialType)) {
-				Lambertian& lambertian = std::get<Lambertian>(material.materialType);
-				if (std::holds_alternative<Texture>(lambertian.baseColor)) {
-					Texture& tex = std::get<Texture>(lambertian.baseColor);
-					cleanupTexture(tex);
+				/*if (material.displacementMap.image != VK_NULL_HANDLE) {
+					cleanupTexture(material.displacementMap);
+				}*/
+			
+				// clean PBR
+				/*if (materialType == 4) {
+					PBR& pbr = std::get<PBR>(material.materialType);
+					if (std::holds_alternative<Texture>(pbr.albedo)) {
+						Texture& tex = std::get<Texture>(pbr.albedo);
+						cleanupTexture(tex);
+					}
+					if (std::holds_alternative<Texture>(pbr.roughness)) {
+						Texture& tex = std::get<Texture>(pbr.roughness);
+						cleanupTexture(tex);
+					}
+					if (std::holds_alternative<Texture>(pbr.metalness)) {
+						Texture& tex = std::get<Texture>(pbr.metalness);
+						cleanupTexture(tex);
+					}
+				}*/
+				// clean Lambertian
+				if (materialType == 1) {
+					Lambertian& lambertian = std::get<Lambertian>(material.materialType);
+					if (std::holds_alternative<Texture>(lambertian.albedo)) {
+						Texture& tex = std::get<Texture>(lambertian.albedo);
+						cleanupTexture(tex);
+					}
 				}
 			}
 		}
@@ -2799,7 +2792,7 @@ private:
 
 		vkDestroySampler(device, textureSampler, nullptr);
 
-		//cleanupAllTextures(materials);
+		cleanupAllTextures(materials);
 
 		vkDestroyImageView(device, defaultImageView, nullptr);
 		vkDestroyImage(device, defaultImage, nullptr);

@@ -60,7 +60,7 @@ struct PBR {
 };
 
 struct Lambertian {
-	ColorOrTexture baseColor;
+	ColorOrTexture albedo;
 };
 
 struct Material {
@@ -81,7 +81,7 @@ struct Material {
 			if constexpr (std::is_same_v<T, Simple>) return 0; // simple
 			else if constexpr (std::is_same_v<T, Lambertian>) return 1; // diffuse
 			else if constexpr (std::is_same_v<T, Mirror>) return 2; // mirror
-			else if constexpr (std::is_same_v<T, Environment>) return 3; // environment (not gonna use tho
+			else if constexpr (std::is_same_v<T, Environment>) return 3; // environment
 			else if constexpr (std::is_same_v<T, PBR>) return 4; //  PBR
 			else return -1;
 			}, materialType);
@@ -343,7 +343,7 @@ public:
 	// give methods that can access the value
 	const std::vector<Mesh>& getMeshes() const { return meshes; }
 	const std::vector<Node>& getNodes() const { return nodes; }
-	std::vector<Material>& getMaterials()  { return materials; }
+	std::vector<Material>& getMaterials() { return materials; }
 	const std::vector<Camera>& getCameras() const { return cameras; }
 	const Environment& getEnvironment() const { return environment; }
 	const std::vector<AnimationClip>& getClips() const { return clips; }
@@ -569,7 +569,7 @@ private:
 			std::string key = parseString(str, pos);
 			skipWhitespace(str, pos);
 			if (str[pos] != ':') {
-				std::cerr << "Expected ':' after key \"" << key << "\" at position " << pos << "\n";
+				std::cerr << "Expected ':' after key \"" << key << "\" in Material at position " << pos << "\n";
 				break;
 			}
 			pos++; // Skip the colon
@@ -593,8 +593,33 @@ private:
 			}
 			else if (key == "lambertian") {
 				Lambertian lambertianMaterial;
-				lambertianMaterial.baseColor = parseColorOrTexture(str, pos);
-				material.materialType = lambertianMaterial;
+				skipWhitespace(str, pos);
+
+				if (str[pos] != '{') {
+					std::cerr << "Expected '{' at position " << pos << "\n";
+					return material; // Return empty Radiance on error
+				}
+				pos++;
+
+				while (true) {
+					skipWhitespace(str, pos);
+					if (str[pos] == '}') {
+						pos++; // Skip the closing brace
+						break;
+					}
+					std::string key = parseString(str, pos);
+					skipWhitespace(str, pos);
+					if (str[pos] != ':') {
+						std::cerr << "Expected ':' after key \"" << key << "\" in lambertian at position " << pos << "\n";
+						break;
+					}
+					pos++; // Skip colon
+					skipWhitespace(str, pos);
+					if (key == "albedo") { lambertianMaterial.albedo = parseColorOrTexture(str, pos); }
+					material.materialType = lambertianMaterial;
+				}
+
+
 			}
 			else if (key == "mirror") {
 				material.materialType = Mirror{};
@@ -672,13 +697,6 @@ private:
 			}
 
 			skipWhitespace(str, pos);
-			if (str[pos] == ',') {
-				pos++; // Move to the next key
-			}
-			else if (str[pos] != '}') {
-				std::cerr << "Expected '}' or ',' at position " << pos << "\n";
-				break;
-			}
 		}
 		return texture;
 	}

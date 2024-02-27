@@ -1,10 +1,10 @@
 #version 450
 
-layout(location = 0) in vec4 fragColor;
-layout(location = 1) in mat3 fragTBN;
-layout(location = 4) in vec2 fragTexCoord;
-layout(location = 5) in vec3 fragPos;
-layout(location = 6) in vec3 fragNorm;
+layout(location = 0) in vec3 fragPos;
+layout(location = 1) in vec3 fragNorm;
+layout(location = 2) in mat3 fragTBN;
+layout(location = 5) in vec2 fragTexCoord;
+layout(location = 6) in vec4 fragColor;
 
 layout(location = 0) out vec4 outColor;
 
@@ -35,22 +35,33 @@ vec3 adjustSaturation(vec3 color, float saturation) {
 }
 
 void main() {
-    vec3 albedo = fragColor.rgb;
-    vec3 normal = fragNorm;
+    vec4 albedo;
+    vec3 normal;
     vec3 viewDir = normalize(ubo.cameraPos - fragPos);
     vec3 reflectDir = reflect(viewDir, normal);
+    vec3 envColor;
+
+    vec3 normalFromMap = texture(normalMap, fragTexCoord).rgb;
+    normal = normalize(fragTBN * (normalFromMap * 2.0 - 1.0));
 
     if (pushConstants.materialType == 1) {
-        albedo = texture(texSampler, fragTexCoord).rgb;
-        vec3 normalFromMap = texture(normalMap, fragTexCoord).rgb;
-        normal = normalize(fragTBN * (normalFromMap * 2.0 - 1.0));
+        albedo = texture(texSampler, fragTexCoord);
+        envColor = texture(envMap, normal).rgb;
+    } 
+    else if (pushConstants.materialType == 2) 
+    {
+        vec3 viewDir = normalize(ubo.cameraPos - fragPos);
+        vec3 reflectDir = reflect(viewDir, normal);
+        envColor = texture(envMap, -reflectDir).rgb;
+    } 
+    else if (pushConstants.materialType == 3) 
+    {
+        envColor = texture(envMap, normal).rgb;
     }
-
-    vec3 envColor = texture(envMap, reflectDir).rgb;
 
     vec3 ldrColor = toneMappingFilmic(envColor); 
     ldrColor = adjustSaturation(ldrColor, 1.2);
 
-    outColor = vec4(ldrColor,1.0f) * fragColor;
+    outColor = vec4(ldrColor,0) * albedo;
 }
 

@@ -17,11 +17,11 @@ layout(location = 2) in vec4 inTangent;
 layout(location = 3) in vec2 inTexCoord;
 layout(location = 4) in vec4 inColor;
 
-layout(location = 0) out vec4 fragColor;
-layout(location = 1) out mat3 fragTBN;
-layout(location = 4) out vec2 fragTexCoord;
-layout(location = 5) out vec3 fragPos;
-layout(location = 6) out vec3 fragNorm;
+layout(location = 0) out vec3 fragPos;
+layout(location = 1) out vec3 fragNorm;
+layout(location = 2) out mat3 fragTBN;
+layout(location = 5) out vec2 fragTexCoord;
+layout(location = 6) out vec4 fragColor;
 
 void main() {
     gl_Position = ubo.proj * ubo.view * pushConstants.model * vec4(inPosition, 1.0);
