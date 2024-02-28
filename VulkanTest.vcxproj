@@ -160,6 +160,7 @@
   <ItemGroup>
     <ClInclude Include="camera.h" />
     <ClInclude Include="event.h" />
+    <ClInclude Include="lambertian.h" />
     <ClInclude Include="parser.hpp" />
     <ClInclude Include="stb_image.h" />
   </ItemGroup>
