@@ -7,7 +7,60 @@ struct Cubemap {
     glm::vec4* data;
 };
 
-glm::vec3 sampleCubemapDirection(Cubemap& cubemap, const glm::vec3& direction) {}
+void directionToUV(const glm::vec3& dir, int& faceIndex, float& u, float& v) {
+    float absX = std::abs(dir.x);
+    float absY = std::abs(dir.y);
+    float absZ = std::abs(dir.z);
+    float maxComponent = std::max({ absX, absY, absZ });
+
+    if (maxComponent == absX) {
+        faceIndex = dir.x > 0 ? 0 : 1; // +x or -x
+        u = dir.x > 0 ? -dir.z : dir.z;
+        v = -dir.y;
+    }
+    else if (maxComponent == absY) {
+        faceIndex = dir.y > 0 ? 2 : 3; // +y or -y 
+        u = dir.x;
+        v = dir.y > 0 ? dir.z : -dir.z;
+    }
+    else {
+        faceIndex = dir.z > 0 ? 4 : 5; // +z or -z
+        u = dir.z > 0 ? dir.x : -dir.x;
+        v = -dir.y;
+    }
+
+    u = 0.5f * (u / maxComponent + 1.0f);
+    v = 0.5f * (v / maxComponent + 1.0f);
+
+}
+
+glm::vec3 sampleCubemapDirection(Cubemap& cubemap, const glm::vec3& direction) {
+    int faceIndex;
+    float u, v;
+
+    directionToUV(direction, faceIndex, u, v);
+
+    int faceWidth = cubemap.width;
+    int faceHeight = cubemap.height / 6;
+
+    int x = static_cast<int>(u * faceWidth);
+    int y = static_cast<int>((faceIndex * faceHeight) + v * faceHeight);
+
+    // get color from data 
+    int index = y * cubemap.width + x;
+    glm::vec4 colorVec;
+    if (index >= 0 && index < (cubemap.width * cubemap.height)) {
+        colorVec = cubemap.data[index];
+    }
+    else {
+        std::cerr << "Index out of range: " << index << std::endl;
+    }
+
+    // turn to vec3 
+    glm::vec3 color(colorVec.r, colorVec.g, colorVec.b);
+
+    return color;
+}
 
 glm::vec4 rgbe_to_float(glm::u8vec4 col) {
     // process zero exponent
@@ -91,37 +144,6 @@ glm::vec3 ndcToDirection(float u, float v) {
 
     // nomorlize direction
     return glm::normalize(direction);
-}
-
-glm::vec2 directionToUV(const glm::vec3& dir) {
-    float u, v;
-    float absX = std::abs(dir.x);
-    float absY = std::abs(dir.y);
-    float absZ = std::abs(dir.z);
-    float maxComponent = std::max({ absX, absY, absZ });
-    int faceIndex;
-
-    if (maxComponent == absX) {
-        faceIndex = dir.x > 0 ? 0 : 1; // +x or -x
-        u = dir.x > 0 ? -dir.z : dir.z;
-        v = -dir.y;
-    }
-    else if (maxComponent == absY) {
-        faceIndex = dir.y > 0 ? 2 : 3; // +y or -y 
-        u = dir.x;
-        v = dir.y > 0 ? dir.z : -dir.z;
-    }
-    else {
-        faceIndex = dir.z > 0 ? 4 : 5; // +z or -z
-        u = dir.z > 0 ? dir.x : -dir.x;
-        v = -dir.y;
-    }
-
-    float faceHeight = 1.0f / 6.0f;
-    u = 0.5f * (u / maxComponent + 1.0f); // convert to [0, 1] range
-    v = 0.5f * (v / maxComponent + 1.0f) + faceIndex * faceHeight; // convert to the corresponding face
-
-    return glm::vec2(u, v);
 }
 
 glm::vec3 randomHemisphereSample(const glm::vec3& normal) {

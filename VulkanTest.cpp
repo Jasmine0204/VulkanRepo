@@ -9,7 +9,6 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-
 #include <chrono> // precise timekeeping
 #include <iostream>
 #include <stdexcept>
@@ -37,6 +36,11 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define _CRT_SECURE_NO_WARNINGS
+#include <stb_image_write.h>
+
 // Written by Jasmine Chen, andrew id: zitongc
 // For 15-672 Realtime Rendering Graphics during Spring 2024, taught by Jim McCann
 // References: 
@@ -63,6 +67,8 @@ uint32_t currentFrame = 0;
 std::string eventFilePath = "./model/events.txt";
 bool headless = false;
 bool lambertian = false;
+std::string inputFile = "./model/sky.png";
+std::string outputFile = "./model/sky_lambertian.png";
 
 
 // store all supportive command line options
@@ -71,7 +77,7 @@ struct CommandLineOptions {
 	std::string drawingSize;
 	std::string sceneFile = "./model/env-cube.s72";
 	std::string eventFile = "./model/events.txt";
-	bool lambertian = false;
+	bool lambertian = true;
 	std::string inputFile = "./model/sky.png";
 	std::string outputFile = "./model/sky_diffuse.png";
 };
@@ -344,51 +350,7 @@ bool isInsideFrustum(const BoundingBox& box, const glm::mat4& vpMatrix) {
 	}
 }
 
-Cubemap cubemap;
-void createLambertianCubeMap(const std::string& inFile, const std::string& outFile) {
-	int width, height, channels;
-	stbi_uc* pixel = stbi_load(inFile.c_str(), &width, &height, &channels, STBI_rgb_alpha);
-	if (!pixel) {
-		std::cerr << "Error loading input cubemap" << std::endl;
-		return;
-	}
 
-	int outWidth = 16;
-	int outHeight = 16;
-	glm::vec3* outputData = new glm::vec3[outWidth * outHeight * channels];
-
-	for (int y = 0; y < outHeight; ++y) {
-		for (int x = 0; x < outWidth; ++x) {
-			// convert uv to normalized device coordinates
-			float u = (x + 0.5f) / outWidth * 2.0f - 1.0f;
-			float v = (y + 0.5f) / outHeight * 2.0f - 1.0f;
-
-			glm::vec3 direction = ndcToDirection(u, v);
-
-			// initialize accmulated color
-			glm::vec3 accumulatedColor(0.0f, 0.0f, 0.0f);
-
-			int numSamples = 100;
-			for (int sample = 0; sample < numSamples; ++sample) {
-				// calculate random direction on the hemisphere
-				glm::vec3 sampleDirection = randomHemisphereSample(direction);
-
-				// get color value
-				glm::vec3 color = sampleCubemapDirection(cubemap, sampleDirection);
-
-				// apply Lambertian's cosine law
-				float cosineWeight = std::max(glm::dot(direction, sampleDirection), 0.0f);
-				accumulatedColor += color * cosineWeight;
-			}
-
-			// normalize color
-			accumulatedColor /= numSamples;
-
-			int pixelIndex = (y * outWidth + x) * channels;
-			outputData[pixelIndex] = float_to_rgbe(accumulatedColor);
-		}
-	}
-}
 
 
 class FirstTriangle {
@@ -526,7 +488,7 @@ private:
 	VkSampler textureSampler;
 
 	// environment cubemap
-	
+	Cubemap cubemap;
 	VkImage cubemapImage;
 	VkDeviceMemory cubemapImageMemory;
 	VkImageView cubemapImageView;
@@ -660,8 +622,12 @@ private:
 		defaultImageView = createImageView(defaultImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 		loadAllTextures();
 
-		createCubemap(cubemapImage, cubemapImageMemory, environment.radiance.src);
+		createCubemap(cubemapImage, cubemapImageMemory, environment.radiance.src, cubemap);
 		cubemapImageView = createImageView(cubemapImage, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 6, VK_IMAGE_VIEW_TYPE_CUBE);
+
+		if (lambertian) {
+			createLambertianCubeMap(inputFile, outputFile);
+		}
 
 		createDepthResources(swapChainExtent);
 
@@ -760,8 +726,76 @@ private:
 	}
 
 	
+	void createLambertianCubeMap(const std::string& inFile, const std::string& outFile) {
+		int width, height, channels;
+		stbi_uc* pixel = stbi_load(inFile.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+		if (!pixel) {
+			std::cerr << "Error loading input cubemap" << std::endl;
+			return;
+		}
 
-	void createCubemap(VkImage& cubemapImage, VkDeviceMemory& cubemapImageMemory, std::string imagePath) {
+		int outWidth = 16;
+		int outHeight = 16;
+		glm::vec4* outputData = new glm::vec4[outWidth * outHeight * 4];
+
+
+
+		for (int y = 0; y < outHeight; ++y) {
+			for (int x = 0; x < outWidth; ++x) {
+				// convert uv to normalized device coordinates
+				float u = (x + 0.5f) / outWidth * 2.0f - 1.0f;
+				float v = (y + 0.5f) / outHeight * 2.0f - 1.0f;
+
+				glm::vec3 direction = ndcToDirection(u, v);
+
+
+				// initialize accmulated color
+				glm::vec3 accumulatedColor(0.0f, 0.0f, 0.0f);
+
+				int numSamples = 100;
+				for (int sample = 0; sample < numSamples; ++sample) {
+					// calculate random direction on the hemisphere
+					glm::vec3 sampleDirection = randomHemisphereSample(direction);
+
+					// get color value
+					glm::vec3 color = sampleCubemapDirection(cubemap, sampleDirection);
+
+					// apply Lambertian's cosine law
+					float cosineWeight = std::max(glm::dot(direction, sampleDirection), 0.0f);
+					accumulatedColor += color * cosineWeight;
+				}
+
+				// normalize color
+				accumulatedColor /= numSamples;
+
+				int pixelIndex = (y * outWidth + x) * channels;
+
+				outputData[pixelIndex] = float_to_rgbe(accumulatedColor);
+
+			}
+		}
+
+		std::vector<unsigned char> imageData(outWidth * outHeight * 4);
+
+		for (int i = 0; i < outWidth * outHeight; ++i) {
+			imageData[i * 4 + 0] = static_cast<unsigned char>(outputData[i].r * 255.0f); // R
+			imageData[i * 4 + 1] = static_cast<unsigned char>(outputData[i].g * 255.0f); // G
+			imageData[i * 4 + 2] = static_cast<unsigned char>(outputData[i].b * 255.0f); // B
+			imageData[i * 4 + 3] = static_cast<unsigned char>(outputData[i].a * 255.0f); // A
+		}
+		std::cout << "Debug\n";
+
+		// save image to file
+		if (!stbi_write_png(outFile.c_str(), outWidth, outHeight, 4, imageData.data(), outWidth * 4)) {
+			std::cerr << "Error saving output cubemap" << std::endl;
+			return;
+		}
+
+		// clean image
+		stbi_image_free(pixel);
+	}
+
+	void createCubemap(VkImage& cubemapImage, VkDeviceMemory& cubemapImageMemory, std::string imagePath, Cubemap& cubemap) {
 
 		// load all six images and calculate total size
 		int width, height, channels;
@@ -790,7 +824,9 @@ private:
 		
 		cubemap.width = width;
 		cubemap.height = height;
-		cubemap.data = rgbData;
+		// deep copy rgbdata to cubemap.data
+		cubemap.data = new glm::vec4[width * height];
+		std::memcpy(cubemap.data, rgbData, width * height * sizeof(glm::vec4));
 
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
@@ -813,6 +849,7 @@ private:
 		// clean up buffer & memory
 		vkDestroyBuffer(device, stagingBuffer, nullptr);
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
+
 	}
 
 	void createSampler(VkSampler& sampler) {
@@ -3058,6 +3095,8 @@ CommandLineOptions parseCommandLine(int argc, char* argv[]) {
 			if (i + 2 < argc) {
 				options.inputFile = argv[++i];
 				options.outputFile = argv[++i];
+				inputFile = options.inputFile;
+				outputFile = options.outputFile;
 			}
 			else {
 				std::cerr << "ERROR: '--lambertian' requires two file names." << std::endl;
@@ -3086,9 +3125,7 @@ int main(int argc, char* argv[]) {
 	headless = options.headless;
 	lambertian = options.lambertian;
 
-	if (lambertian) {
-		createLambertianCubeMap(options.inputFile, options.outputFile);
-	}
+	
 
 	if (!headless) {
 		try {
