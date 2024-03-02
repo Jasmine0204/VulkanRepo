@@ -100,49 +100,36 @@ glm::vec4 float_to_rgbe(glm::vec3 col) {
     );
 }
 
-glm::vec3 ndcToDirection(float u, float v) {
+glm::vec3 faceIndexToDirection(int faceIndex, float u, float v) {
+    // map uv from [0, 1] to [-1, 1]
+    float x = 2.0f * u - 1.0f;
+    float y = 2.0f * v - 1.0f;
+
     glm::vec3 direction;
-
-    // use max to determine which face is pointing at
-    float absU = std::abs(u);
-    float absV = std::abs(v);
-    float maxComponent = std::max({ absU, absV, 1.0f });
-
-    if (maxComponent == absU) {
-        // left or right
-        if (u > 0) {
-            // right
-            direction = glm::vec3(1.0f, -v, -1.0f / u);
-        }
-        else {
-            // left
-            direction = glm::vec3(-1.0f, -v, 1.0f / u);
-        }
-    }
-    else if (maxComponent == absV) {
-        // up or down
-        if (v > 0) {
-            // up
-            direction = glm::vec3(u, 1.0f, -1.0f / v);
-        }
-        else {
-            // down
-            direction = glm::vec3(u, -1.0f, 1.0f / v);
-        }
-    }
-    else {
-        // front or back
-        if (u > 0) {
-            // front
-            direction = glm::vec3(u, -v, -1.0f);
-        }
-        else {
-            // back
-            direction = glm::vec3(-u, -v, 1.0f);
-        }
+    switch (faceIndex) {
+    case 0: // +X
+        direction = glm::vec3(1.0f, -y, -x);
+        break;
+    case 1: // -X
+        direction = glm::vec3(-1.0f, -y, x);
+        break;
+    case 2: // +Y
+        direction = glm::vec3(x, 1.0f, y);
+        break;
+    case 3: // -Y
+        direction = glm::vec3(x, -1.0f, -y);
+        break;
+    case 4: // +Z
+        direction = glm::vec3(x, -y, 1.0f);
+        break;
+    case 5: // -Z
+        direction = glm::vec3(-x, -y, -1.0f);
+        break;
+    default:
+        direction = glm::vec3(0.0f);
+        break;
     }
 
-    // nomorlize direction
     return glm::normalize(direction);
 }
 

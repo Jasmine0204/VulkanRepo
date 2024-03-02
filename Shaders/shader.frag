@@ -17,6 +17,7 @@ layout(binding = 0) uniform UniformBufferObject {
 layout(binding = 1) uniform sampler2D texSampler;
 layout(binding = 2) uniform sampler2D normalMap;
 layout(binding = 3) uniform samplerCube envMap;
+layout(binding = 4) uniform samplerCube lambertianMap;
 
 layout(push_constant) uniform PushConstants {
     mat4 model;
@@ -61,7 +62,7 @@ void main() {
     } 
     else if (pushConstants.materialType == 3) 
     {
-        envColor = texture(envMap, normal).rgb;  
+        envColor = texture(lambertianMap, normal).rgb;  
         vec3 ldrColor = toneMappingFilmic(envColor); 
         ldrColor = adjustSaturation(ldrColor, 1.2);
         outColor = vec4(ldrColor,0);

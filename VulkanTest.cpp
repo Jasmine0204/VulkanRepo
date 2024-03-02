@@ -77,7 +77,7 @@ struct CommandLineOptions {
 	std::string drawingSize;
 	std::string sceneFile = "./model/env-cube.s72";
 	std::string eventFile = "./model/events.txt";
-	bool lambertian = true;
+	bool lambertian = false;
 	std::string inputFile = "./model/sky.png";
 	std::string outputFile = "./model/sky_diffuse.png";
 };
@@ -493,6 +493,12 @@ private:
 	VkDeviceMemory cubemapImageMemory;
 	VkImageView cubemapImageView;
 
+	// lambertian cubemap
+	Cubemap lambertianCubemap;
+	VkImage lambertianCubemapImage;
+	VkDeviceMemory lambertianCubemapImageMemory;
+	VkImageView lambertianCubemapImageView;
+
 	// default pixel
 	VkImage defaultImage;
 	VkDeviceMemory defaultImageMemory;
@@ -629,6 +635,9 @@ private:
 			createLambertianCubeMap(inputFile, outputFile);
 		}
 
+		createCubemap(lambertianCubemapImage, lambertianCubemapImageMemory, "sky_lambertian.png", lambertianCubemap);
+		lambertianCubemapImageView = createImageView(lambertianCubemapImage, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 6, VK_IMAGE_VIEW_TYPE_CUBE);
+
 		createDepthResources(swapChainExtent);
 
 		createFramebuffers();
@@ -725,7 +734,7 @@ private:
 		return texture;
 	}
 
-	
+
 	void createLambertianCubeMap(const std::string& inFile, const std::string& outFile) {
 		int width, height, channels;
 		stbi_uc* pixel = stbi_load(inFile.c_str(), &width, &height, &channels, STBI_rgb_alpha);
@@ -735,24 +744,28 @@ private:
 		}
 
 		int outWidth = 16;
-		int outHeight = 16;
-		glm::vec4* outputData = new glm::vec4[outWidth * outHeight * 4];
+		int outHeight = 96;
+		glm::vec4* outputData = new glm::vec4[outWidth * outHeight];
 
-
+		int faceHeight = outHeight / 6;
 
 		for (int y = 0; y < outHeight; ++y) {
+			int faceIndex = y / faceHeight;
+			float faceV = (y % faceHeight + 0.5f) / faceHeight;
 			for (int x = 0; x < outWidth; ++x) {
 				// convert uv to normalized device coordinates
-				float u = (x + 0.5f) / outWidth * 2.0f - 1.0f;
-				float v = (y + 0.5f) / outHeight * 2.0f - 1.0f;
+				float u = (x + 0.5f) / outWidth;
+				float v = faceV;
 
-				glm::vec3 direction = ndcToDirection(u, v);
+				glm::vec3 direction = faceIndexToDirection(faceIndex, u, v);
+
+				//std::cout << direction.x << " " << direction.y << " " << direction.z << "\n";
 
 
 				// initialize accmulated color
 				glm::vec3 accumulatedColor(0.0f, 0.0f, 0.0f);
 
-				int numSamples = 100;
+				int numSamples = 10000;
 				for (int sample = 0; sample < numSamples; ++sample) {
 					// calculate random direction on the hemisphere
 					glm::vec3 sampleDirection = randomHemisphereSample(direction);
@@ -768,7 +781,7 @@ private:
 				// normalize color
 				accumulatedColor /= numSamples;
 
-				int pixelIndex = (y * outWidth + x) * channels;
+				int pixelIndex = y * outWidth + x;
 
 				outputData[pixelIndex] = float_to_rgbe(accumulatedColor);
 
@@ -778,12 +791,13 @@ private:
 		std::vector<unsigned char> imageData(outWidth * outHeight * 4);
 
 		for (int i = 0; i < outWidth * outHeight; ++i) {
-			imageData[i * 4 + 0] = static_cast<unsigned char>(outputData[i].r * 255.0f); // R
-			imageData[i * 4 + 1] = static_cast<unsigned char>(outputData[i].g * 255.0f); // G
-			imageData[i * 4 + 2] = static_cast<unsigned char>(outputData[i].b * 255.0f); // B
-			imageData[i * 4 + 3] = static_cast<unsigned char>(outputData[i].a * 255.0f); // A
+			imageData[i * 4 + 0] = static_cast<unsigned char>(outputData[i].r); // R
+			imageData[i * 4 + 1] = static_cast<unsigned char>(outputData[i].g); // G
+			imageData[i * 4 + 2] = static_cast<unsigned char>(outputData[i].b); // B
+			imageData[i * 4 + 3] = static_cast<unsigned char>(outputData[i].a); // e
+			//std::cout << outputData[i].r << " " << outputData[i].g << " " << outputData[i].b << " " << outputData[i].a << "imageData\n";
 		}
-		std::cout << "Debug\n";
+
 
 		// save image to file
 		if (!stbi_write_png(outFile.c_str(), outWidth, outHeight, 4, imageData.data(), outWidth * 4)) {
@@ -793,6 +807,7 @@ private:
 
 		// clean image
 		stbi_image_free(pixel);
+		delete[] outputData;
 	}
 
 	void createCubemap(VkImage& cubemapImage, VkDeviceMemory& cubemapImageMemory, std::string imagePath, Cubemap& cubemap) {
@@ -811,7 +826,7 @@ private:
 			throw std::runtime_error("Image strip doesn't have the correct dimensions for a cubemap!");
 		}
 
-		
+
 		VkDeviceSize imageSize = width * height * sizeof(glm::vec4);
 
 		// decode rgbe and convert to rgb
@@ -821,7 +836,7 @@ private:
 			glm::u8vec4 col(pixel[i * 4], pixel[i * 4 + 1], pixel[i * 4 + 2], pixel[i * 4 + 3]);
 			rgbData[i] = rgbe_to_float(col);
 		}
-		
+
 		cubemap.width = width;
 		cubemap.height = height;
 		// deep copy rgbdata to cubemap.data
@@ -1187,7 +1202,12 @@ private:
 				cubemapImageInfo.imageView = cubemapImageView;
 				cubemapImageInfo.sampler = textureSampler; // i use the same sampler for cubemap
 
-				std::array<VkWriteDescriptorSet, 4> descriptorWrites{};
+				VkDescriptorImageInfo lambertianCubemapImageInfo{};
+				lambertianCubemapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				lambertianCubemapImageInfo.imageView = lambertianCubemapImageView;
+				lambertianCubemapImageInfo.sampler = textureSampler;
+
+				std::array<VkWriteDescriptorSet, 5> descriptorWrites{};
 
 				descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 				descriptorWrites[0].dstSet = descriptorSet;
@@ -1257,6 +1277,14 @@ private:
 				descriptorWrites[3].descriptorCount = 1;
 				descriptorWrites[3].pImageInfo = &cubemapImageInfo;
 
+				descriptorWrites[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+				descriptorWrites[4].dstSet = descriptorSets[frame];
+				descriptorWrites[4].dstBinding = 4;
+				descriptorWrites[4].dstArrayElement = 0;
+				descriptorWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+				descriptorWrites[4].descriptorCount = 1;
+				descriptorWrites[4].pImageInfo = &lambertianCubemapImageInfo;
+
 				vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 			}
 		}
@@ -1265,7 +1293,7 @@ private:
 	void createDescriptorPool() {
 		//  allocate one of these descriptors for every frame
 		size_t totalMaterials = materials.size();
-		std::array<VkDescriptorPoolSize, 4> poolSizes{};
+		std::array<VkDescriptorPoolSize, 5> poolSizes{};
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
 		poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -1274,14 +1302,15 @@ private:
 		poolSizes[2].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
 		poolSizes[3].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		poolSizes[3].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
-
+		poolSizes[4].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		poolSizes[4].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
 
 
 		VkDescriptorPoolCreateInfo poolInfo{};
 		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 		poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
 		poolInfo.pPoolSizes = poolSizes.data();
-		poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * 4);
+		poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * 5);
 
 		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create descriptor pool!");
@@ -1343,8 +1372,16 @@ private:
 		cubemapLayoutBinding.pImmutableSamplers = nullptr;
 		cubemapLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+		// lambertian cubemap
+		VkDescriptorSetLayoutBinding lambertianCubemapLayoutBinding{};
+		lambertianCubemapLayoutBinding.binding = 4;
+		lambertianCubemapLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		lambertianCubemapLayoutBinding.descriptorCount = 1;
+		lambertianCubemapLayoutBinding.pImmutableSamplers = nullptr;
+		lambertianCubemapLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-		std::array<VkDescriptorSetLayoutBinding, 4> bindings = { uboLayoutBinding, samplerLayoutBinding, normalmapLayoutBinding, cubemapLayoutBinding };
+
+		std::array<VkDescriptorSetLayoutBinding, 5> bindings = { uboLayoutBinding, samplerLayoutBinding, normalmapLayoutBinding, cubemapLayoutBinding, lambertianCubemapLayoutBinding };
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
 		layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -2843,7 +2880,7 @@ private:
 				/*if (material.displacementMap.image != VK_NULL_HANDLE) {
 					cleanupTexture(material.displacementMap);
 				}*/
-			
+
 				// clean PBR
 				/*if (materialType == 4) {
 					PBR& pbr = std::get<PBR>(material.materialType);
@@ -2887,6 +2924,10 @@ private:
 		vkDestroyImageView(device, cubemapImageView, nullptr);
 		vkDestroyImage(device, cubemapImage, nullptr);
 		vkFreeMemory(device, cubemapImageMemory, nullptr);
+
+		vkDestroyImageView(device, lambertianCubemapImageView, nullptr);
+		vkDestroyImage(device, lambertianCubemapImage, nullptr);
+		vkFreeMemory(device, lambertianCubemapImageMemory, nullptr);
 
 		for (size_t i = 0; i < uniformBuffers.size(); i++) {
 			vkDestroyBuffer(device, uniformBuffers[i], nullptr);
@@ -3108,9 +3149,6 @@ CommandLineOptions parseCommandLine(int argc, char* argv[]) {
 	return options;
 }
 
-
-
-
 int main(int argc, char* argv[]) {
 	// parse command line options
 	CommandLineOptions options = parseCommandLine(argc, argv);
@@ -3125,7 +3163,7 @@ int main(int argc, char* argv[]) {
 	headless = options.headless;
 	lambertian = options.lambertian;
 
-	
+
 
 	if (!headless) {
 		try {
