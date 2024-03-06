@@ -743,8 +743,43 @@ private:
 			return;
 		}
 
-		int outWidth = 16;
-		int outHeight = 96;
+		int totalPixels = width * height;
+		std::vector<std::pair<float, int>> brightness_indices(totalPixels);
+		glm::vec4* rgbData = new glm::vec4[totalPixels];
+
+		// calculate brightness and store
+		for (int i = 0; i < totalPixels; ++i) {
+			glm::u8vec4 col(pixel[i * 4], pixel[i * 4 + 1], pixel[i * 4 + 2], pixel[i * 4 + 3]);
+			rgbData[i] = rgbe_to_float(col);
+			float brightness = 0.299f * rgbData[i].r + 0.587f * rgbData[i].g + 0.114f * rgbData[i].b;
+			brightness_indices[i] = std::make_pair(brightness, i);
+		}
+
+
+		// descend sorting
+		std::sort(brightness_indices.begin(), brightness_indices.end(), [](const auto& a, const auto& b) {
+			return a.first > b.first;
+			});
+
+		// change the lightest 10000 pixels into dark grey
+		const int maxBrightPixels = std::min(10000, totalPixels);
+		for (int i = 0; i < maxBrightPixels; ++i) {
+			int pixelIndex = brightness_indices[i].second;
+			rgbData[pixelIndex].r = static_cast<unsigned char>(0.3f * 255); // R
+			rgbData[pixelIndex].g = static_cast<unsigned char>(0.3f * 255); // G
+			rgbData[pixelIndex].b = static_cast<unsigned char>(0.3f * 255); // B
+			// Alpha unchange
+		}
+
+
+		cubemap.width = width;
+		cubemap.height = height;
+		// deep copy rgbdata to cubemap.data
+		cubemap.data = new glm::vec4[width * height];
+		std::memcpy(cubemap.data, rgbData, width * height * sizeof(glm::vec4));
+
+		int outWidth = 9;
+		int outHeight = 54;
 		glm::vec4* outputData = new glm::vec4[outWidth * outHeight];
 
 		int faceHeight = outHeight / 6;
@@ -837,11 +872,7 @@ private:
 			rgbData[i] = rgbe_to_float(col);
 		}
 
-		cubemap.width = width;
-		cubemap.height = height;
-		// deep copy rgbdata to cubemap.data
-		cubemap.data = new glm::vec4[width * height];
-		std::memcpy(cubemap.data, rgbData, width * height * sizeof(glm::vec4));
+		
 
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;

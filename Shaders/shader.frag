@@ -46,10 +46,11 @@ void main() {
     normal = normalize(fragTBN * (normalFromMap * 2.0 - 1.0));
 
     if (pushConstants.materialType == 1) {
-        albedo = texture(texSampler, fragTexCoord);
-        envColor = texture(envMap, normal).rgb;
-        vec3 light = mix(vec3(0,0,0), vec3(1,1,1), dot(normal, vec3(0,0,1)) * 0.5 + 0.5);
-        outColor = vec4(light * albedo.rgb, 1.0);
+       albedo = texture(texSampler, fragTexCoord);
+       envColor = texture(lambertianMap, normal).rgb;
+       vec3 ldrColor = toneMappingFilmic(envColor); 
+       ldrColor = adjustSaturation(ldrColor, 1.2);
+       outColor = vec4(ldrColor * albedo.rgb, 1.0);
     } 
     else if (pushConstants.materialType == 2) 
     {
@@ -62,7 +63,7 @@ void main() {
     } 
     else if (pushConstants.materialType == 3) 
     {
-        envColor = texture(lambertianMap, normal).rgb;  
+        envColor = texture(envMap, normal).rgb;  
         vec3 ldrColor = toneMappingFilmic(envColor); 
         ldrColor = adjustSaturation(ldrColor, 1.2);
         outColor = vec4(ldrColor,0);

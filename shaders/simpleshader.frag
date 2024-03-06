@@ -39,7 +39,7 @@ void main() {
 
     if (pushConstants.materialType == 0)
     {
-    envColor = texture(lambertianMap, normal).rgb;
+    envColor = texture(envMap, normal).rgb;
     }
 
     vec3 ldrColor = toneMappingFilmic(envColor); 
