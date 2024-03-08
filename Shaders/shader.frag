@@ -35,22 +35,68 @@ vec3 adjustSaturation(vec3 color, float saturation) {
     return mix(vec3(grey), color, saturation);
 }
 
+float distributionGGX(vec3 N, vec3 H, float roughness) {
+    float a = roughness*roughness;
+    float a2 = a*a;
+    float NdotH = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH*NdotH;
+
+    float nom   = a2;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom = 3.14159265359 * denom * denom;
+
+    return nom / denom;
+}
+
+vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+float geometrySchlickGGX(float NdotV, float roughness) {
+    float a = roughness;
+    float k = (a * a) / 2.0;
+
+    float nom   = NdotV;
+    float denom = NdotV * (1.0 - k) + k;
+
+    return nom / denom;
+}
+
+float geometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    float ggx2 = geometrySchlickGGX(NdotV, roughness);
+    float ggx1 = geometrySchlickGGX(NdotL, roughness);
+
+    return ggx1 * ggx2;
+}
+
+vec3 gammaCorrect(vec3 color) {
+    const float gamma = 2.2;
+    return pow(color, vec3(1.0 / gamma));
+}
+
+
 void main() {
-    vec4 albedo;
-    vec3 normal;
+    vec3 albedo;
+    vec3 normal = fragNorm;
     vec3 viewDir = normalize(ubo.cameraPos - fragPos);
     vec3 reflectDir = reflect(viewDir, normal);
     vec3 envColor;
 
-    vec3 normalFromMap = texture(normalMap, fragTexCoord).rgb;
-    normal = normalize(fragTBN * (normalFromMap * 2.0 - 1.0));
+    float metalness = 0.5;
+    float roughness = 0.5;
+
 
     if (pushConstants.materialType == 1) {
-       albedo = texture(texSampler, fragTexCoord);
+       vec3 normalFromMap = texture(normalMap, fragTexCoord).rgb;
+       normal = normalize(fragTBN * (normalFromMap * 2.0 - 1.0));
+       albedo = texture(texSampler, fragTexCoord).rgb;
        envColor = texture(lambertianMap, normal).rgb;
-       vec3 ldrColor = toneMappingFilmic(envColor); 
-       ldrColor = adjustSaturation(ldrColor, 1.2);
-       outColor = vec4(ldrColor * albedo.rgb, 1.0);
+       vec3 ambient = toneMappingFilmic(envColor); 
+       ambient = adjustSaturation(ambient, 1.2);
+       vec3 light = mix(vec3(0,0,0), vec3(1,1,1), dot(normal, vec3(0,0,1)) * 0.5 + 0.5);
+       outColor = vec4((ambient + light) * albedo, 1.0);
     } 
     else if (pushConstants.materialType == 2) 
     {
@@ -67,6 +113,44 @@ void main() {
         vec3 ldrColor = toneMappingFilmic(envColor); 
         ldrColor = adjustSaturation(ldrColor, 1.2);
         outColor = vec4(ldrColor,0);
+    } 
+    else if (pushConstants.materialType == 4) 
+    {
+       vec3 normalFromMap = texture(normalMap, fragTexCoord).rgb;
+       normal = normalize(fragTBN * (normalFromMap * 2.0 - 1.0));
+
+       vec3 viewDir = normalize(ubo.cameraPos - fragPos);
+       vec3 lightDir = normalize(vec3(-1,-1,-1));
+       vec3 h = normalize(viewDir + lightDir);
+
+       albedo = texture(texSampler, fragTexCoord).rgb;
+       //albedo = vec3(1.0);
+
+       vec3 F0 = mix(vec3(0.04), albedo.rgb, metalness);
+       vec3 F = fresnelSchlick(max(dot(h, viewDir), 0.0), F0);
+
+       float NdotL = max(dot(normal, lightDir), 0.0);
+       float D = distributionGGX(normal, h, roughness);    
+       float G = geometrySmith(normal, viewDir, lightDir, roughness);  
+
+       vec3 nominator = D * F * G;
+       float denominator = 4.0 * max(dot(normal, viewDir), 0.0) * max(dot(normal, lightDir), 0.0);
+       vec3 specular = nominator / max(denominator, 0.001); 
+
+       vec3 kS = F;
+       vec3 kD = vec3(1.0) - kS;
+       kD *= 1.0 - metalness;
+
+       vec3 diffuse = (albedo / 3.14159265359) * kD * NdotL;
+
+       //diffuse = gammaCorrect(diffuse);
+       //specular = gammaCorrect(specular);
+
+       envColor = texture(lambertianMap, normal).rgb;
+       vec3 ambient = toneMappingFilmic(envColor); 
+       ambient = adjustSaturation(ambient, 1.2);
+
+       outColor = vec4(diffuse + specular + ambient * albedo, 1.0);
     }
 
   

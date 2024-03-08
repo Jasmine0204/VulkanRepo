@@ -241,7 +241,7 @@ struct UniformBufferObject {
 struct PushConstants {
 	glm::mat4 model;
 	int materialType;
-	// 0 for simple material, 1 for complex material
+	// 0 for simple material, 1/2/3/4 for complex material
 };
 
 struct QueueFamilyIndices {
@@ -689,49 +689,41 @@ private:
 	void loadAllTextures() {
 		for (auto& material : materials) {
 			// load normal maps
-			if (!material.normalMap.src.empty()) {
-				material.normalMap = loadTexture(material.normalMap.src);
-			}
-			if (!material.displacementMap.src.empty()) {
-				material.displacementMap = loadTexture(material.displacementMap.src);
-			}
+			loadTexture(material.normalMap, material.normalMap.src);
+			loadTexture(material.displacementMap, material.displacementMap.src);
 
 			// load textures
 			if (std::holds_alternative<PBR>(material.materialType)) {
 				PBR& pbr = std::get<PBR>(material.materialType);
 				if (std::holds_alternative<Texture>(pbr.albedo)) {
-					Texture& tex = std::get<Texture>(pbr.albedo);
-					tex = loadTexture(tex.src);
+					loadTexture(std::get<Texture>(pbr.albedo), std::get<Texture>(pbr.albedo).src);
 				}
-				if (std::holds_alternative<Texture>(pbr.roughness)) {
-					Texture& tex = std::get<Texture>(pbr.roughness);
-					tex = loadTexture(tex.src);
+				/*if (std::holds_alternative<Texture>(pbr.roughness)) {
+					loadTexture(std::get<Texture>(pbr.roughness), std::get<Texture>(pbr.roughness).src);
 				}
 				if (std::holds_alternative<Texture>(pbr.metalness)) {
-					Texture& tex = std::get<Texture>(pbr.metalness);
-					tex = loadTexture(tex.src);
-				}
+					loadTexture(std::get<Texture>(pbr.metalness), std::get<Texture>(pbr.metalness).src);
+				}*/
 			}
 			else if (std::holds_alternative<Lambertian>(material.materialType)) {
 				Lambertian& lambertian = std::get<Lambertian>(material.materialType);
 				if (std::holds_alternative<Texture>(lambertian.albedo)) {
-					Texture& tex = std::get<Texture>(lambertian.albedo);
-					tex = loadTexture(tex.src);
+					loadTexture(std::get<Texture>(lambertian.albedo), std::get<Texture>(lambertian.albedo).src);
 				}
 			}
 		}
 	}
 
-	Texture loadTexture(const std::string& fileName) {
-		Texture texture;
+	void loadTexture(Texture& texture, const std::string& fileName) {
+		if (fileName.empty()) {
+			return;
+		}
 		texture.src = fileName;
 
 		// put texture creation process together
 		createTextureImage(texture.image, texture.memory, fileName);
 		texture.imageView = createImageView(texture.image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 		texture.sampler = textureSampler;
-
-		return texture;
 	}
 
 
@@ -872,7 +864,7 @@ private:
 			rgbData[i] = rgbe_to_float(col);
 		}
 
-		
+
 
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
@@ -1215,7 +1207,8 @@ private:
 		for (size_t frame = 0; frame < MAX_FRAME_IN_FLIGHT; frame++) {
 			for (size_t matIndex = 0; matIndex < materials.size(); matIndex++) {
 				Material& material = materials[matIndex];
-				VkDescriptorSet descriptorSet = descriptorSets[frame * materials.size() + matIndex];
+				size_t descriptorIndex = frame * materials.size() + matIndex;
+				VkDescriptorSet descriptorSet = descriptorSets[descriptorIndex];
 
 				VkDescriptorBufferInfo bufferInfo{};
 				bufferInfo.buffer = uniformBuffers[frame];
@@ -1283,7 +1276,24 @@ private:
 						descriptorWrites[1].pImageInfo = &imageInfo;
 					}
 				}
-				// TODO pbr descriptor sets
+				else if (std::holds_alternative<PBR>(material.materialType)) {
+					PBR& pbr = std::get<PBR>(material.materialType);
+					if (std::holds_alternative<Texture>(pbr.albedo)) {
+						Texture& tex = std::get<Texture>(pbr.albedo);
+						VkDescriptorImageInfo imageInfo{};
+						imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+						imageInfo.imageView = tex.imageView;
+						imageInfo.sampler = tex.sampler;
+
+						descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+						descriptorWrites[1].dstSet = descriptorSet;
+						descriptorWrites[1].dstBinding = 1;
+						descriptorWrites[1].dstArrayElement = 0;
+						descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+						descriptorWrites[1].descriptorCount = 1;
+						descriptorWrites[1].pImageInfo = &imageInfo;
+					}
+				}
 
 				if (!material.normalMap.src.empty()) {
 					VkDescriptorImageInfo normalmapImageInfo{};
@@ -1301,7 +1311,7 @@ private:
 				}
 
 				descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-				descriptorWrites[3].dstSet = descriptorSets[frame];
+				descriptorWrites[3].dstSet = descriptorSets[descriptorIndex];
 				descriptorWrites[3].dstBinding = 3;
 				descriptorWrites[3].dstArrayElement = 0;
 				descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -1309,7 +1319,7 @@ private:
 				descriptorWrites[3].pImageInfo = &cubemapImageInfo;
 
 				descriptorWrites[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-				descriptorWrites[4].dstSet = descriptorSets[frame];
+				descriptorWrites[4].dstSet = descriptorSets[descriptorIndex];
 				descriptorWrites[4].dstBinding = 4;
 				descriptorWrites[4].dstArrayElement = 0;
 				descriptorWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -2903,37 +2913,42 @@ private:
 	void cleanupAllTextures(std::vector<Material>& materials) {
 		for (auto& material : materials) {
 			int materialType = material.getMaterialType();
+			std::cout << "material type" << materialType << "\n";
 			if (materialType != 0) {
-				// clean normal maps (displacement
-				if (material.normalMap.image != VK_NULL_HANDLE) {
-					cleanupTexture(material.normalMap);
-				}
+				
 				/*if (material.displacementMap.image != VK_NULL_HANDLE) {
 					cleanupTexture(material.displacementMap);
 				}*/
 
 				// clean PBR
-				/*if (materialType == 4) {
+				if (materialType == 4) {
+					if (material.normalMap.image != VK_NULL_HANDLE) {
+						cleanupTexture(material.normalMap);
+						std::cout << "normal map cleaned." << "\n";
+					}
 					PBR& pbr = std::get<PBR>(material.materialType);
 					if (std::holds_alternative<Texture>(pbr.albedo)) {
-						Texture& tex = std::get<Texture>(pbr.albedo);
-						cleanupTexture(tex);
+						cleanupTexture(std::get<Texture>(pbr.albedo));
 					}
-					if (std::holds_alternative<Texture>(pbr.roughness)) {
-						Texture& tex = std::get<Texture>(pbr.roughness);
-						cleanupTexture(tex);
+					/*if (std::holds_alternative<Texture>(pbr.roughness)) {
+						cleanupTexture(std::get<Texture>(pbr.roughness));
 					}
 					if (std::holds_alternative<Texture>(pbr.metalness)) {
-						Texture& tex = std::get<Texture>(pbr.metalness);
-						cleanupTexture(tex);
-					}
-				}*/
+						cleanupTexture(std::get<Texture>(pbr.metalness));
+					}*/
+				}
+
 				// clean Lambertian
 				if (materialType == 1) {
+					// clean normal maps (displacement
+					if (material.normalMap.image != VK_NULL_HANDLE) {
+					cleanupTexture(material.normalMap);
+					std::cout << "normal map cleaned." << "\n";
+					}
 					Lambertian& lambertian = std::get<Lambertian>(material.materialType);
 					if (std::holds_alternative<Texture>(lambertian.albedo)) {
-						Texture& tex = std::get<Texture>(lambertian.albedo);
-						cleanupTexture(tex);
+						cleanupTexture(std::get<Texture>(lambertian.albedo));
+						std::cout << "lambertian material cleaned." << "\n";
 					}
 				}
 			}

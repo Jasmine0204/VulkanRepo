@@ -27,7 +27,7 @@ void main() {
     gl_Position = ubo.proj * ubo.view * pushConstants.model * vec4(inPosition, 1.0);
     fragPos = vec3(pushConstants.model * vec4(inPosition, 1.0));
 
-    if (pushConstants.materialType == 1) {
+    if (pushConstants.materialType == 1 || pushConstants.materialType == 4) {
     vec3 T = normalize((pushConstants.model * vec4(inTangent.xyz, 0.0)).xyz);
     vec3 N = normalize((pushConstants.model * vec4(inNorm, 0.0)).xyz);
     vec3 B = cross(N, T) * inTangent.w;

@@ -52,11 +52,12 @@ struct Texture {
 };
 
 using ColorOrTexture = std::variant<glm::vec3, Texture>;
+using FloatOrTexture = std::variant<float, Texture>;
 
 struct PBR {
 	ColorOrTexture albedo;
-	ColorOrTexture roughness;
-	ColorOrTexture metalness;
+	FloatOrTexture roughness;
+	FloatOrTexture metalness;
 };
 
 struct Lambertian {
@@ -79,7 +80,7 @@ struct Material {
 		return std::visit([](const auto& arg) -> int {
 			using T = std::decay_t<decltype(arg)>;
 			if constexpr (std::is_same_v<T, Simple>) return 0; // simple
-			else if constexpr (std::is_same_v<T, Lambertian>) return 1; // diffuse
+			else if constexpr (std::is_same_v<T, Lambertian>) return 1; // lambertian diffuse
 			else if constexpr (std::is_same_v<T, Mirror>) return 2; // mirror
 			else if constexpr (std::is_same_v<T, Environment>) return 3; // environment
 			else if constexpr (std::is_same_v<T, PBR>) return 4; //  PBR
@@ -87,8 +88,6 @@ struct Material {
 			}, materialType);
 	}
 };
-
-
 
 struct Attribute {
 	std::string src;
@@ -586,9 +585,42 @@ private:
 			}
 			else if (key == "pbr") {
 				PBR pbrMaterial;
-				pbrMaterial.albedo = parseColorOrTexture(str, pos);
-				pbrMaterial.roughness = parseColorOrTexture(str, pos);
-				pbrMaterial.metalness = parseColorOrTexture(str, pos);
+				skipWhitespace(str, pos);
+				if (str[pos] != '{') {
+					std::cerr << "Expected '{' at position " << pos << "\n";
+					return material; // Return empty Radiance on error
+				}
+				pos++;
+
+				while (true) {
+					skipWhitespace(str, pos);
+					if (str[pos] == '}') {
+						pos++; // Skip the closing brace
+						break;
+					}
+					std::string key = parseString(str, pos);
+					skipWhitespace(str, pos);
+					if (str[pos] != ':') {
+						std::cerr << "Expected ':' after key \"" << key << "\" in pbr at position " << pos << "\n";
+						break;
+					}
+					pos++; // Skip colon
+					skipWhitespace(str, pos);
+					if (key == "albedo") { 
+						pbrMaterial.albedo = parseColorOrTexture(str, pos); 
+					}
+					else if (key == "roughness") { 
+						pbrMaterial.roughness = parseFloatOrTexture(str, pos);  
+						std::cout << "roughness done." << "\n";
+					}
+					else if (key == "metalness") { 
+						pbrMaterial.metalness = parseFloatOrTexture(str, pos);
+						std::cout << "metalness done." << "\n";
+					}
+					if (str[pos] == ',') {
+						pos++;
+					}
+				}
 				material.materialType = pbrMaterial;
 			}
 			else if (key == "lambertian") {
@@ -618,8 +650,6 @@ private:
 					if (key == "albedo") { lambertianMaterial.albedo = parseColorOrTexture(str, pos); }
 					material.materialType = lambertianMaterial;
 				}
-
-
 			}
 			else if (key == "mirror") {
 				material.materialType = Mirror{};
@@ -665,6 +695,17 @@ private:
 		else {
 			std::cerr << "Unexpected character for ColorOrTexture at position " << pos << ": " << str[pos] << "\n";
 			return glm::vec3(); // Returning empty variant on error
+		}
+	}
+
+	FloatOrTexture parseFloatOrTexture(const std::string& str, size_t& pos) {
+		skipWhitespace(str, pos);
+		if (str[pos] == '{') {
+			// Parse as TextureSource
+			return parseTexture(str, pos);
+		}
+		else {
+			return static_cast<float>(parseDouble(str, pos));
 		}
 	}
 
