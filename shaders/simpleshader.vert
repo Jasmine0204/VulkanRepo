@@ -8,7 +8,10 @@ layout(binding = 0) uniform UniformBufferObject {
 
 layout(push_constant) uniform PushConstants {
     mat4 model;
-    int materialType;
+	vec4 albedoColor;
+	float roughness;
+	float metalness;
+	int materialType;
 } pushConstants;
 
 layout(location = 0) in vec3 inPosition;

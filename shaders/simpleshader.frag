@@ -19,32 +19,20 @@ layout(binding = 4) uniform samplerCube lambertianMap;
 
 layout(push_constant) uniform PushConstants {
     mat4 model;
-    int materialType;
+	vec4 albedoColor;
+	float roughness;
+	float metalness;
+	int materialType;
 } pushConstants;
 
-vec3 toneMappingFilmic(vec3 color) {
-    color = max(vec3(0.0), color - vec3(0.004));
-    color = (color * (6.2 * color + vec3(0.5))) / (color * (6.2 * color + vec3(1.7)) + vec3(0.06));
-    return pow(color, vec3(2.2));
-}
-
-vec3 adjustSaturation(vec3 color, float saturation) {
-    float grey = dot(color, vec3(0.2126, 0.7152, 0.0722));
-    return mix(vec3(grey), color, saturation);
-}
 
 void main() {
-    vec3 normal = fragNorm;
-    vec3 envColor;
+    vec3 normal = normalize(fragNorm);
+    vec3 lightDir = normalize(vec3(1,1,1));
 
-    if (pushConstants.materialType == 0)
-    {
-    envColor = texture(envMap, normal).rgb;
-    }
+    float diff = dot(normal, lightDir) * 0.5 + 0.5;
+    vec3 finalColor = diff * fragColor.rgb;
 
-    vec3 ldrColor = toneMappingFilmic(envColor); 
-    ldrColor = adjustSaturation(ldrColor, 1.2);
-
-    outColor = vec4(envColor,1.0f) * fragColor;
+    outColor = vec4(finalColor, 1.0);
 }
 

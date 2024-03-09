@@ -67,18 +67,18 @@ uint32_t currentFrame = 0;
 std::string eventFilePath = "./model/events.txt";
 bool headless = false;
 bool lambertian = false;
-std::string inputFile = "./model/sky.png";
-std::string outputFile = "./model/sky_lambertian.png";
+std::string inputFile = "./model/ox_bridge_morning.png";
+std::string outputFile = "./model/sky_diffuse.png";
 
 
 // store all supportive command line options
 struct CommandLineOptions {
 	bool headless = false;
 	std::string drawingSize;
-	std::string sceneFile = "./model/env-cube.s72";
+	std::string sceneFile = "./model/A2-Create.s72";
 	std::string eventFile = "./model/events.txt";
 	bool lambertian = false;
-	std::string inputFile = "./model/sky.png";
+	std::string inputFile = "./model/ox_bridge_morning.png";
 	std::string outputFile = "./model/sky_diffuse.png";
 };
 
@@ -143,7 +143,7 @@ std::vector<Vertex> parseVertices(const std::string fileName, const Mesh& mesh) 
 			throw std::runtime_error("tangent data exceeds buffer limits");
 		}
 		memcpy(&vertex.tangent, verticesBuffer.data() + tangentOffset, sizeof(vertex.tangent));
-
+		//std::cout << vertex.tangent.x << " " << vertex.tangent.y << " " << vertex.tangent.z << " " << vertex.tangent.w << "\n";
 		// parse texcoord
 		size_t texOffset = i * 52 + 40;
 		if (texOffset + sizeof(vertex.texCoord) > verticesBuffer.size()) {
@@ -234,12 +234,15 @@ const bool enableValidationLayers = true;
 struct UniformBufferObject {
 	glm::mat4 view;
 	glm::mat4 projection;
-	glm::vec3 cameraPos;
+	glm::vec4 cameraPos;
 };
 
 // store push constants struct
 struct PushConstants {
 	glm::mat4 model;
+	glm::vec4 albedoColor;
+	float roughness;
+	float metalness;
 	int materialType;
 	// 0 for simple material, 1/2/3/4 for complex material
 };
@@ -282,10 +285,16 @@ struct BoundingBox {
 		int containerIndex = sceneGraph.meshIndexMap.at(node.mesh);
 		const Mesh& mesh = sceneGraph.meshes.at(containerIndex);
 		Attribute attr = mesh.getAttribute("POSITION");
+		bool isSimple;
+		int stride = attr.stride;
 
-		int materialIndex = sceneGraph.materialIndexMap.at(mesh.material);
-		const Material& material = sceneGraph.materials.at(materialIndex);
-		bool isSimple = (material.getMaterialType() == 0);
+		if (stride == 28) {
+			isSimple = true;
+		}
+		else {
+			isSimple = false;
+		}
+
 
 		if (!isSimple) {
 			std::vector<Vertex> vertices = parseVertices(attr.src, mesh);
@@ -635,15 +644,21 @@ private:
 			createLambertianCubeMap(inputFile, outputFile);
 		}
 
+
 		createCubemap(lambertianCubemapImage, lambertianCubemapImageMemory, "sky_lambertian.png", lambertianCubemap);
 		lambertianCubemapImageView = createImageView(lambertianCubemapImage, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT, 6, VK_IMAGE_VIEW_TYPE_CUBE);
+
 
 		createDepthResources(swapChainExtent);
 
 		createFramebuffers();
 
+
 		createVertexBuffersForAllMeshes(sceneGraph.meshes);
+		// BUG
 		//createIndexBuffer();
+
+
 
 		createUniformBuffer();
 
@@ -652,6 +667,7 @@ private:
 
 		createCommandBuffers(swapChainCommandBuffers);
 		createSyncObjects();
+		
 	}
 
 	// skip window creation and swapchain
@@ -1485,10 +1501,15 @@ private:
 
 	void createVertexBuffer(Mesh& mesh) {
 		Attribute attr = mesh.getAttribute("POSITION");
+		int stride = attr.stride;
+		bool isSimple;
 
-		int materialIndex = sceneGraph.materialIndexMap.at(mesh.material);
-		const Material& material = sceneGraph.materials.at(materialIndex);
-		bool isSimple = (material.getMaterialType() == 0);
+		if (stride == 28) {
+			isSimple = true;
+		}
+		else {
+			isSimple = false;
+		}
 
 		std::vector<Vertex> vertices;
 		std::vector<SimpleVertex> simpleVertices;
@@ -1498,10 +1519,8 @@ private:
 			vertices = parseVertices(attr.src, mesh);
 			//printVertices(vertices);
 			bufferSize = sizeof(vertices[0]) * vertices.size();
-			std::cout << "parsing Vertex" << "\n";
 		}
 		else {
-			std::cout << "parsing simpleVertex" << "\n";
 			simpleVertices = parseSimpleVertices(attr.src, mesh);
 			bufferSize = sizeof(simpleVertices[0]) * simpleVertices.size();
 		};
@@ -1856,9 +1875,15 @@ private:
 		if (node.mesh >= 0) {
 			int meshContainerIndex = sceneGraph.meshIndexMap.at(node.mesh);
 			const Mesh& mesh = sceneGraph.meshes.at(meshContainerIndex);
+
+			Attribute attr = mesh.getAttribute("POSITION");
+			int stride = attr.stride;
+
+			if (stride == 52) {
 			materialIndex = sceneGraph.materialIndexMap.at(mesh.material);
 			material = sceneGraph.materials.at(materialIndex);
 			materialType = material.getMaterialType();
+			}		
 		}
 
 		// calculate descriptor set index 
@@ -1868,6 +1893,28 @@ private:
 		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[descriptorSetIndex], 0, nullptr);
 
 		// update ubo & push constants
+		pushConstants.albedoColor = glm::vec4(-1);
+		pushConstants.roughness = 0;
+		pushConstants.metalness = 0;
+
+		if (materialType == 1) {
+			Lambertian& lambertian = std::get<Lambertian>(material.materialType);
+			if (std::holds_alternative<glm::vec3>(lambertian.albedo)) {
+				pushConstants.albedoColor = glm::vec4(std::get<glm::vec3>(lambertian.albedo), 1);
+			}
+		}
+		else if (materialType == 4) {
+			PBR& pbr = std::get<PBR>(material.materialType);
+			if (std::holds_alternative<glm::vec3>(pbr.albedo)) {
+				pushConstants.albedoColor = glm::vec4(std::get<glm::vec3>(pbr.albedo), 1);
+			}
+			if (std::holds_alternative<float>(pbr.roughness)) {
+				pushConstants.roughness = std::get<float>(pbr.roughness);
+			}
+			if (std::holds_alternative<float>(pbr.metalness)) {
+				pushConstants.metalness = std::get<float>(pbr.metalness);
+			}
+		}
 		pushConstants.model = modelMatrix;
 		pushConstants.materialType = materialType;
 		vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants), &pushConstants);
@@ -2184,7 +2231,7 @@ private:
 		VkPushConstantRange pushConstantRange{};
 		pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;;
 		pushConstantRange.offset = 0;
-		pushConstantRange.size = sizeof(glm::mat4) + sizeof(int);
+		pushConstantRange.size = 104;
 
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -2867,13 +2914,13 @@ private:
 		if (isDebugCameraActive) {
 			ubo.view = debugCamera.GetViewMatrix();
 			ubo.projection = debugCamera.GetProjectionMatrix();
-			ubo.cameraPos = debugCamera.Position;
+			ubo.cameraPos = glm::vec4(debugCamera.Position,0);
 
 		}
 		else if (isUserCameraActive) {
 			ubo.view = userCamera.GetViewMatrix();
 			ubo.projection = userCamera.GetProjectionMatrix();
-			ubo.cameraPos = userCamera.Position;
+			ubo.cameraPos = glm::vec4(userCamera.Position,0);
 		}
 		else if (isRenderCameraActive) {
 			Camera sceneCamera = cameras[0];
@@ -2883,11 +2930,14 @@ private:
 			renderCamera.AspectRatio = sceneCamera.perspective.aspect;
 			ubo.view = renderCamera.GetViewMatrix();
 			ubo.projection = renderCamera.GetProjectionMatrix();
-			ubo.cameraPos = renderCamera.Position;
+			ubo.cameraPos = glm::vec4(renderCamera.Position,0);
 
 		}
 
 		ubo.projection[1][1] *= -1;
+
+		
+
 
 		// GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted;
 
@@ -2943,7 +2993,6 @@ private:
 					// clean normal maps (displacement
 					if (material.normalMap.image != VK_NULL_HANDLE) {
 					cleanupTexture(material.normalMap);
-					std::cout << "normal map cleaned." << "\n";
 					}
 					Lambertian& lambertian = std::get<Lambertian>(material.materialType);
 					if (std::holds_alternative<Texture>(lambertian.albedo)) {

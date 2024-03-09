@@ -11,7 +11,7 @@ layout(location = 0) out vec4 outColor;
 layout(binding = 0) uniform UniformBufferObject {
     mat4 view;
     mat4 proj;
-    vec3 cameraPos;
+    vec4 cameraPos;
 } ubo;
 
 layout(binding = 1) uniform sampler2D texSampler;
@@ -21,7 +21,10 @@ layout(binding = 4) uniform samplerCube lambertianMap;
 
 layout(push_constant) uniform PushConstants {
     mat4 model;
-    int materialType;
+	vec4 albedoColor;
+	float roughness;
+	float metalness;
+	int materialType;
 } pushConstants;
 
 vec3 toneMappingFilmic(vec3 color) {
@@ -79,36 +82,50 @@ vec3 gammaCorrect(vec3 color) {
 
 void main() {
     vec3 albedo;
-    vec3 normal = fragNorm;
-    vec3 viewDir = normalize(ubo.cameraPos - fragPos);
-    vec3 reflectDir = reflect(viewDir, normal);
     vec3 envColor;
 
-    float metalness = 0.5;
-    float roughness = 0.5;
+    if(pushConstants.albedoColor.x < 0){
+       albedo = texture(texSampler, fragTexCoord).rgb; 
+    } else {
+       albedo = pushConstants.albedoColor.rgb;
+    }
 
+    float roughness = pushConstants.roughness;
+    float metalness = pushConstants.metalness;
+    
 
     if (pushConstants.materialType == 1) {
-       vec3 normalFromMap = texture(normalMap, fragTexCoord).rgb;
-       normal = normalize(fragTBN * (normalFromMap * 2.0 - 1.0));
-       albedo = texture(texSampler, fragTexCoord).rgb;
+       vec3 normalMap = texture(normalMap, fragTexCoord).rgb;
+       normalMap = normalMap * 2.0 - 1.0;
+       //vec3 normal = normalize(fragTBN * normalMap);
+       vec3 normal =  normalize(-normalMap * fragNorm);
+
        envColor = texture(lambertianMap, normal).rgb;
        vec3 ambient = toneMappingFilmic(envColor); 
        ambient = adjustSaturation(ambient, 1.2);
-       vec3 light = mix(vec3(0,0,0), vec3(1,1,1), dot(normal, vec3(0,0,1)) * 0.5 + 0.5);
-       outColor = vec4((ambient + light) * albedo, 1.0);
+
+       vec3 lightDir = normalize(vec3(1,1,1));
+       float NdotL = max(dot(normal, lightDir), 0.0);
+       vec3 diffuse = vec3(1, 1, 1) * NdotL;
+
+       outColor = vec4((ambient + diffuse) * albedo, 1.0);
+       //outColor = vec4(normalize(normal) * 0.5 + 0.5, 1.0);
+
     } 
     else if (pushConstants.materialType == 2) 
     {
-        vec3 viewDir = normalize(ubo.cameraPos - fragPos);
+        vec3 normal = fragNorm;
+        vec3 viewDir = normalize(ubo.cameraPos.xyz - fragPos);
         vec3 reflectDir = reflect(viewDir, normal);
         envColor = texture(envMap, -reflectDir).rgb;
         vec3 ldrColor = toneMappingFilmic(envColor); 
         ldrColor = adjustSaturation(ldrColor, 1.2);
         outColor = vec4(ldrColor,0);
+        outColor = vec4(normalize(normal) * 0.5 + 0.5, 1.0);
     } 
     else if (pushConstants.materialType == 3) 
     {
+        vec3 normal = fragNorm;
         envColor = texture(envMap, normal).rgb;  
         vec3 ldrColor = toneMappingFilmic(envColor); 
         ldrColor = adjustSaturation(ldrColor, 1.2);
@@ -116,22 +133,23 @@ void main() {
     } 
     else if (pushConstants.materialType == 4) 
     {
-       vec3 normalFromMap = texture(normalMap, fragTexCoord).rgb;
-       normal = normalize(fragTBN * (normalFromMap * 2.0 - 1.0));
+       vec3 normalMap = texture(normalMap, fragTexCoord).rgb;
+       normalMap = normalMap * 2.0 - 1.0;
+       //vec3 normal = normalize(fragTBN * normalMap);
+       vec3 normal =  normalize(-normalMap * fragNorm);
 
-       vec3 viewDir = normalize(ubo.cameraPos - fragPos);
-       vec3 lightDir = normalize(vec3(-1,-1,-1));
+       vec3 viewDir = normalize(ubo.cameraPos.xyz - fragPos);
+       vec3 lightDir = normalize(vec3(1,1,1));
        vec3 h = normalize(viewDir + lightDir);
 
-       albedo = texture(texSampler, fragTexCoord).rgb;
-       //albedo = vec3(1.0);
 
        vec3 F0 = mix(vec3(0.04), albedo.rgb, metalness);
        vec3 F = fresnelSchlick(max(dot(h, viewDir), 0.0), F0);
 
-       float NdotL = max(dot(normal, lightDir), 0.0);
-       float D = distributionGGX(normal, h, roughness);    
-       float G = geometrySmith(normal, viewDir, lightDir, roughness);  
+       float adjustedRoughness = max(roughness, 0.05);
+
+       float D = distributionGGX(normal, h, adjustedRoughness);    
+       float G = geometrySmith(normal, viewDir, lightDir, adjustedRoughness);  
 
        vec3 nominator = D * F * G;
        float denominator = 4.0 * max(dot(normal, viewDir), 0.0) * max(dot(normal, lightDir), 0.0);
@@ -141,16 +159,21 @@ void main() {
        vec3 kD = vec3(1.0) - kS;
        kD *= 1.0 - metalness;
 
+       float NdotL = max(dot(normal, lightDir), 0.0);
        vec3 diffuse = (albedo / 3.14159265359) * kD * NdotL;
 
-       //diffuse = gammaCorrect(diffuse);
-       //specular = gammaCorrect(specular);
+       vec3 reflectDir = reflect(viewDir, normal);
+       vec3 mirrorColor = texture(envMap, -reflectDir).rgb;
 
        envColor = texture(lambertianMap, normal).rgb;
-       vec3 ambient = toneMappingFilmic(envColor); 
+
+       vec3 mixedEnvColor = mix(envColor, mirrorColor, metalness);
+
+       vec3 ambient = toneMappingFilmic(mixedEnvColor); 
        ambient = adjustSaturation(ambient, 1.2);
 
        outColor = vec4(diffuse + specular + ambient * albedo, 1.0);
+       outColor = vec4(normalize(normal) * 0.5 + 0.5, 1.0);
     }
 
   

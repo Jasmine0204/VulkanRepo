@@ -8,7 +8,10 @@ layout(binding = 0) uniform UniformBufferObject {
 
 layout(push_constant) uniform PushConstants {
     mat4 model;
-    int materialType;
+	vec4 albedoColor;
+	float roughness;
+	float metalness;
+	int materialType;
 } pushConstants;
 
 layout(location = 0) in vec3 inPosition;
@@ -26,20 +29,19 @@ layout(location = 6) out vec4 fragColor;
 void main() {
     gl_Position = ubo.proj * ubo.view * pushConstants.model * vec4(inPosition, 1.0);
     fragPos = vec3(pushConstants.model * vec4(inPosition, 1.0));
+    fragNorm = normalize(mat3(pushConstants.model) * inNorm);
 
     if (pushConstants.materialType == 1 || pushConstants.materialType == 4) {
-    vec3 T = normalize((pushConstants.model * vec4(inTangent.xyz, 0.0)).xyz);
-    vec3 N = normalize((pushConstants.model * vec4(inNorm, 0.0)).xyz);
-    vec3 B = cross(N, T) * inTangent.w;
+        vec3 T = normalize(mat3(pushConstants.model) * inTangent.xyz);
+        vec3 B = cross(fragNorm, T) * inTangent.w;
+        fragTBN = mat3(T, B, fragNorm);
 
-    fragTBN = mat3(T, B, N);
     } else {
     fragTBN = mat3(1.0);
     }
     
-
     fragColor = inColor;
     fragTexCoord = inTexCoord;
-    fragNorm = inNorm;
+    
     
 }
