@@ -97,8 +97,7 @@ void main() {
     if (pushConstants.materialType == 1) {
        vec3 normalMap = texture(normalMap, fragTexCoord).rgb;
        normalMap = normalMap * 2.0 - 1.0;
-       //vec3 normal = normalize(fragTBN * normalMap);
-       vec3 normal =  normalize(-normalMap * fragNorm);
+       vec3 normal = normalize(fragTBN * normalMap);
 
        envColor = texture(lambertianMap, normal).rgb;
        vec3 ambient = toneMappingFilmic(envColor); 
@@ -109,7 +108,6 @@ void main() {
        vec3 diffuse = vec3(1, 1, 1) * NdotL;
 
        outColor = vec4((ambient + diffuse) * albedo, 1.0);
-       //outColor = vec4(normalize(normal) * 0.5 + 0.5, 1.0);
 
     } 
     else if (pushConstants.materialType == 2) 
@@ -121,7 +119,6 @@ void main() {
         vec3 ldrColor = toneMappingFilmic(envColor); 
         ldrColor = adjustSaturation(ldrColor, 1.2);
         outColor = vec4(ldrColor,0);
-        outColor = vec4(normalize(normal) * 0.5 + 0.5, 1.0);
     } 
     else if (pushConstants.materialType == 3) 
     {
@@ -135,8 +132,7 @@ void main() {
     {
        vec3 normalMap = texture(normalMap, fragTexCoord).rgb;
        normalMap = normalMap * 2.0 - 1.0;
-       //vec3 normal = normalize(fragTBN * normalMap);
-       vec3 normal =  normalize(-normalMap * fragNorm);
+       vec3 normal = normalize(fragTBN * normalMap);
 
        vec3 viewDir = normalize(ubo.cameraPos.xyz - fragPos);
        vec3 lightDir = normalize(vec3(1,1,1));
@@ -173,7 +169,6 @@ void main() {
        ambient = adjustSaturation(ambient, 1.2);
 
        outColor = vec4(diffuse + specular + ambient * albedo, 1.0);
-       outColor = vec4(normalize(normal) * 0.5 + 0.5, 1.0);
     }
 
   

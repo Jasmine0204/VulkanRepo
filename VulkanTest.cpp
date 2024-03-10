@@ -75,7 +75,7 @@ std::string outputFile = "./model/sky_diffuse.png";
 struct CommandLineOptions {
 	bool headless = false;
 	std::string drawingSize;
-	std::string sceneFile = "./model/A2-Create.s72";
+	std::string sceneFile = "./model/materials.s72";
 	std::string eventFile = "./model/events.txt";
 	bool lambertian = false;
 	std::string inputFile = "./model/ox_bridge_morning.png";
@@ -773,9 +773,9 @@ private:
 		const int maxBrightPixels = std::min(10000, totalPixels);
 		for (int i = 0; i < maxBrightPixels; ++i) {
 			int pixelIndex = brightness_indices[i].second;
-			rgbData[pixelIndex].r = static_cast<unsigned char>(0.3f * 255); // R
-			rgbData[pixelIndex].g = static_cast<unsigned char>(0.3f * 255); // G
-			rgbData[pixelIndex].b = static_cast<unsigned char>(0.3f * 255); // B
+			rgbData[pixelIndex].r = static_cast<unsigned char>(0.2f * 255); // R
+			rgbData[pixelIndex].g = static_cast<unsigned char>(0.2f * 255); // G
+			rgbData[pixelIndex].b = static_cast<unsigned char>(0.2f * 255); // B
 			// Alpha unchange
 		}
 
@@ -786,8 +786,8 @@ private:
 		cubemap.data = new glm::vec4[width * height];
 		std::memcpy(cubemap.data, rgbData, width * height * sizeof(glm::vec4));
 
-		int outWidth = 9;
-		int outHeight = 54;
+		int outWidth = 16;
+		int outHeight = 96;
 		glm::vec4* outputData = new glm::vec4[outWidth * outHeight];
 
 		int faceHeight = outHeight / 6;
@@ -808,7 +808,7 @@ private:
 				// initialize accmulated color
 				glm::vec3 accumulatedColor(0.0f, 0.0f, 0.0f);
 
-				int numSamples = 10000;
+				int numSamples = 1000;
 				for (int sample = 0; sample < numSamples; ++sample) {
 					// calculate random direction on the hemisphere
 					glm::vec3 sampleDirection = randomHemisphereSample(direction);

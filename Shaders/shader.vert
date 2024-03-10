@@ -31,17 +31,10 @@ void main() {
     fragPos = vec3(pushConstants.model * vec4(inPosition, 1.0));
     fragNorm = normalize(mat3(pushConstants.model) * inNorm);
 
-    if (pushConstants.materialType == 1 || pushConstants.materialType == 4) {
-        vec3 T = normalize(mat3(pushConstants.model) * inTangent.xyz);
-        vec3 B = cross(fragNorm, T) * inTangent.w;
-        fragTBN = mat3(T, B, fragNorm);
-
-    } else {
-    fragTBN = mat3(1.0);
-    }
+    vec3 T = normalize(mat3(pushConstants.model) * inTangent.xyz);
+    vec3 B = cross(fragNorm, T) * inTangent.w;
+    fragTBN = mat3(T, B, fragNorm);
     
     fragColor = inColor;
-    fragTexCoord = inTexCoord;
-    
-    
+    fragTexCoord = vec2(inTexCoord.x, 1-inTexCoord.y);
 }
