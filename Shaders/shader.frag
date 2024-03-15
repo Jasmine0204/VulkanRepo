@@ -93,10 +93,10 @@ void main() {
     float roughness = pushConstants.roughness;
     float metalness = pushConstants.metalness;
     
-
+    // lambertian
     if (pushConstants.materialType == 1) {
        vec3 normalMap = texture(normalMap, fragTexCoord).rgb;
-       normalMap = normalMap * 2.0 - 1.0;
+       normalMap = normalize(normalMap * 2.0 - 1.0);
        vec3 normal = normalize(fragTBN * normalMap);
 
        envColor = texture(lambertianMap, normal).rgb;
@@ -110,6 +110,7 @@ void main() {
        outColor = vec4((ambient + diffuse) * albedo, 1.0);
 
     } 
+    // mirror
     else if (pushConstants.materialType == 2) 
     {
         vec3 normal = fragNorm;
@@ -120,6 +121,7 @@ void main() {
         ldrColor = adjustSaturation(ldrColor, 1.2);
         outColor = vec4(ldrColor,0);
     } 
+    // environement
     else if (pushConstants.materialType == 3) 
     {
         vec3 normal = fragNorm;
@@ -128,10 +130,11 @@ void main() {
         ldrColor = adjustSaturation(ldrColor, 1.2);
         outColor = vec4(ldrColor,0);
     } 
+    // PBR
     else if (pushConstants.materialType == 4) 
     {
        vec3 normalMap = texture(normalMap, fragTexCoord).rgb;
-       normalMap = normalMap * 2.0 - 1.0;
+       normalMap = normalize(normalMap * 2.0 - 1.0);
        vec3 normal = normalize(fragTBN * normalMap);
 
        vec3 viewDir = normalize(ubo.cameraPos.xyz - fragPos);

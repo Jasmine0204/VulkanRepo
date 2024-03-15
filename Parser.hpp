@@ -28,6 +28,31 @@
 
 // define structs
 
+struct Sun {
+	float angle;
+	float strength;
+};
+
+struct Sphere {
+	float radius;
+	float power;
+	float limit;
+};
+
+struct Spot {
+	float radius;
+	float power;
+	float fov;
+	float blend;
+	float limit;
+};
+
+struct Light {
+	std::string name;
+	glm::vec3 tint;
+	std::variant<Sun, Sphere, Spot, std::monostate> lightType;
+	int shadow;
+};
 
 struct Mirror {};
 struct Simple {};
@@ -71,6 +96,7 @@ struct Material {
 
 	// Variant to handle different material types
 	std::variant<PBR, Lambertian, Mirror, Environment, Simple, std::monostate> materialType;
+
 	bool isSimple() const {
 		return std::holds_alternative<Simple>(materialType);
 	}
@@ -222,7 +248,8 @@ struct Node {
 	glm::vec3 scale;
 	int mesh = -1;
 	int camera = -1;
-	int environment;
+	int environment = -1;
+	int light = -1;
 	std::vector<int> children;
 	bool operator==(const Node& other) const {
 		return (name == other.name && translation == other.translation); // compare 'value' to find node
@@ -267,6 +294,7 @@ public:
 	std::vector<Camera> cameras;
 	std::vector<AnimationClip> clips;
 	std::vector<Material> materials;
+	std::vector<Light> lights;
 	Environment environment;
 	Scene parsedScene;
 
@@ -274,6 +302,7 @@ public:
 	std::unordered_map<int, int> cameraIndexMap;
 	std::unordered_map<int, int> globalNodeIndexMap;
 	std::unordered_map<int, int> materialIndexMap;
+	std::unordered_map<int, int> lightIndexMap;
 	std::unordered_map<int, NodeAnimation> nodeAnimations;
 
 	void addMesh(const Mesh& mesh, int globalIndex) {
@@ -292,6 +321,12 @@ public:
 		int containerIndex = materials.size();
 		materials.push_back(material);
 		materialIndexMap[globalPosition] = containerIndex;
+	}
+
+	void addLight(Light& light, int globalPosition) {
+		int containerIndex = lights.size();
+		lights.push_back(light);
+		lightIndexMap[globalPosition] = containerIndex;
 	}
 
 	void addCamera(const Camera& camera, int globalPosition) {
@@ -343,6 +378,7 @@ public:
 	const std::vector<Mesh>& getMeshes() const { return meshes; }
 	const std::vector<Node>& getNodes() const { return nodes; }
 	std::vector<Material>& getMaterials() { return materials; }
+	const std::vector<Light>& getLights() { return lights; }
 	const std::vector<Camera>& getCameras() const { return cameras; }
 	const Environment& getEnvironment() const { return environment; }
 	const std::vector<AnimationClip>& getClips() const { return clips; }
@@ -419,7 +455,6 @@ private:
 
 	// parse object -> parse Mesh/node/camera -> Scene parser loop -> parse object...
 	void parseObject(const std::string& str, size_t& pos, SceneGraph& sceneGraph) {
-		//std::vector<int> rootPositions;
 		skipWhitespace(str, pos);
 		if (str[pos] != '{') {
 			std::cerr << "Expected '{' at position " << pos << " in Object start\n";
@@ -477,12 +512,174 @@ private:
 				globalPosition++;
 				Environment environment = parseEnvironment(str, pos, sceneGraph);
 			}
+			else if (type == "LIGHT") {
+				globalPosition++;
+				Light light = parseLight(str, pos, sceneGraph);
+			}
 		}
 		skipWhitespace(str, pos);
 
 		std::cout << "One object done\n";
 		return; // end object
 
+	}
+
+	Light parseLight(const std::string& str, size_t& pos, SceneGraph& sceneGraph) {
+		Light light;
+		while (true) {
+			skipWhitespace(str, pos);
+			if (str[pos] == '}') {
+				pos++; // Skip the closing brace
+				break;
+			}
+			std::string key = parseString(str, pos);
+			skipWhitespace(str, pos);
+			if (str[pos] != ':') {
+				std::cerr << "Expected ':' after key \"" << key << "\" in Light at position " << pos << "\n";
+				break;
+			}
+			pos++; // Skip the colon
+			skipWhitespace(str, pos);
+
+			if (key == "name") {
+				light.name = parseString(str, pos);
+
+			}
+			else if (key == "tint") {
+				light.tint = parseVec3(str, pos);
+			}
+			else if (key == "sun") {
+				Sun sun;
+				skipWhitespace(str, pos);
+
+				if (str[pos] != '{') {
+					std::cerr << "Expected '{' at position " << pos << "\n";
+					return light; // Return empty
+				}
+				pos++;
+
+				while (true) {
+					skipWhitespace(str, pos);
+					if (str[pos] == '}') {
+						pos++; // Skip the closing brace
+						break;
+					}
+					skipWhitespace(str, pos);
+					std::string key = parseString(str, pos);
+
+					skipWhitespace(str, pos);
+					if (str[pos] != ':') {
+						std::cerr << "Expected ':' after key \"" << key << "\" in light property at position " << pos << "\n";
+						break;
+					}
+					pos++; // Skip colon
+					skipWhitespace(str, pos);
+					if (key == "angle") {
+						sun.angle = static_cast<float>(parseDouble(str, pos));
+					}
+					else if (key == "strength") {
+						sun.strength = static_cast<float>(parseDouble(str, pos));
+					}
+
+					if (str[pos] == ',') {
+						pos++; // Move to next key
+					}
+
+					light.lightType = sun;
+				}
+			}
+			else if (key == "sphere") {
+				Sphere sphere;
+				skipWhitespace(str, pos);
+
+				if (str[pos] != '{') {
+					std::cerr << "Expected '{' at position " << pos << "\n";
+					return light; // Return empty
+				}
+				pos++;
+
+				while (true) {
+					skipWhitespace(str, pos);
+					if (str[pos] == '}') {
+						pos++; // Skip the closing brace
+						break;
+					}
+					std::string key = parseString(str, pos);
+					skipWhitespace(str, pos);
+					if (str[pos] != ':') {
+						std::cerr << "Expected ':' after key \"" << key << "\" in light at position " << pos << "\n";
+						break;
+					}
+					pos++; // Skip colon
+					skipWhitespace(str, pos);
+					if (key == "radius") { sphere.radius = static_cast<float>(parseDouble(str, pos)); }
+					else if (key == "power") {
+						sphere.power = static_cast<float>(parseDouble(str, pos));
+					}
+					else if (key == "limit") {
+						sphere.limit = static_cast<float>(parseDouble(str, pos));
+					}
+
+					if (str[pos] == ',') {
+						pos++; // Move to next key
+					}
+
+					light.lightType = sphere;
+				}
+			}
+			else if (key == "spot") {
+				Spot spot;
+				skipWhitespace(str, pos);
+
+				if (str[pos] != '{') {
+					std::cerr << "Expected '{' at position " << pos << "\n";
+					return light; // Return empty
+				}
+				pos++;
+
+				while (true) {
+					skipWhitespace(str, pos);
+					if (str[pos] == '}') {
+						pos++; // Skip the closing brace
+						break;
+					}
+					std::string key = parseString(str, pos);
+					skipWhitespace(str, pos);
+					if (str[pos] != ':') {
+						std::cerr << "Expected ':' after key \"" << key << "\" in light at position " << pos << "\n";
+						break;
+					}
+					pos++; // Skip colon
+					skipWhitespace(str, pos);
+					if (key == "radius") { spot.radius = static_cast<float>(parseDouble(str, pos)); }
+					else if (key == "power") {
+						spot.power = static_cast<float>(parseDouble(str, pos));
+					}
+					else if (key == "fov") {
+						spot.fov = static_cast<float>(parseDouble(str, pos));
+					}
+					else if (key == "blend") {
+						spot.blend = static_cast<float>(parseDouble(str, pos));
+					}
+					else if (key == "limit") {
+						spot.limit = static_cast<float>(parseDouble(str, pos));
+					}
+
+					if (str[pos] == ',') {
+						pos++; // Move to next key
+					}
+
+					light.lightType = spot;
+				}
+			}
+			else if (key == "shadow") { light.shadow = parseInt(str, pos); }
+			skipWhitespace(str, pos);
+			if (str[pos] == ',') {
+				pos++; // Move to next key
+			}
+		}
+		sceneGraph.addLight(light, globalPosition);
+		return light;
 	}
 
 	Environment parseEnvironment(const std::string& str, size_t& pos, SceneGraph& sceneGraph) {
@@ -606,14 +803,14 @@ private:
 					}
 					pos++; // Skip colon
 					skipWhitespace(str, pos);
-					if (key == "albedo") { 
-						pbrMaterial.albedo = parseColorOrTexture(str, pos); 
+					if (key == "albedo") {
+						pbrMaterial.albedo = parseColorOrTexture(str, pos);
 					}
-					else if (key == "roughness") { 
-						pbrMaterial.roughness = parseFloatOrTexture(str, pos);  
+					else if (key == "roughness") {
+						pbrMaterial.roughness = parseFloatOrTexture(str, pos);
 						std::cout << "roughness done." << "\n";
 					}
-					else if (key == "metalness") { 
+					else if (key == "metalness") {
 						pbrMaterial.metalness = parseFloatOrTexture(str, pos);
 						std::cout << "metalness done." << "\n";
 					}
@@ -898,6 +1095,9 @@ private:
 			}
 			else if (key == "environment") {
 				node.environment = parseInt(str, pos);
+			}
+			else if (key == "light") {
+				node.light = parseInt(str, pos);
 			}
 
 			skipWhitespace(str, pos);

@@ -51,6 +51,7 @@
 // https://raytracing.github.io/books/RayTracingTheNextWeek.html#boundingvolumehierarchies/axis-alignedboundingboxes(aabbs) the inspiration of AABB bounding box
 // https://www.glfw.org/docs/latest/quick.html GLFW documentations
 // https://cplusplus.com/articles/DEN36Up4/ parse command line options
+// 
 // A2:
 // https://www.radiance-online.org/cgi-bin/viewcvs.cgi/ray/src/common/color.c?revision=2.33&view=markup#l188 convert rgbe to rgb
 // https://github.com/ixchow/15-466-ibl/blob/master/rgbe.hpp rgbe -> rgb
@@ -59,6 +60,9 @@
 // https://gist.github.com/Pikachuxxxx/136940d6d0d64074aba51246f514bd26 tone-mapping in fragment shader
 // https://en.wikipedia.org/wiki/Relative_luminance adjust vibrance after tone-mapping
 // https://architextures.org/textures free educational use textures
+// 
+// A3 Reference list (more detailed citations are commented together with code blocks that are inspired by corresponding reference)
+// https://www.opengl-tutorial.org/intermediate-tutorials/tutorial-16-shadow-mapping/ A very detailed tutorial that go through each step of creating shadow map in OpenGL.
 
 uint32_t WIDTH = 1280;
 uint32_t HEIGHT = 720;
@@ -75,7 +79,7 @@ std::string outputFile = "./model/sky_diffuse.png";
 struct CommandLineOptions {
 	bool headless = false;
 	std::string drawingSize;
-	std::string sceneFile = "./model/materials.s72";
+	std::string sceneFile = "./model/env-cube.s72";
 	std::string eventFile = "./model/events.txt";
 	bool lambertian = false;
 	std::string inputFile = "./model/ox_bridge_morning.png";
@@ -90,6 +94,7 @@ const std::vector<Node>& nodes = sceneGraph.getNodes();
 const std::vector<Camera>& cameras = sceneGraph.getCameras();
 const std::vector<AnimationClip>& clips = sceneGraph.getClips();
 std::vector<Material>& materials = sceneGraph.getMaterials();
+const std::vector<Light>& lights = sceneGraph.getLights();
 const Scene& scene = sceneGraph.getScene();
 const Environment& environment = sceneGraph.getEnvironment();
 
@@ -508,10 +513,13 @@ private:
 	VkDeviceMemory lambertianCubemapImageMemory;
 	VkImageView lambertianCubemapImageView;
 
-	// default pixel
+	// default pixel for aldebo & normalmap
 	VkImage defaultImage;
 	VkDeviceMemory defaultImageMemory;
 	VkImageView defaultImageView;
+	VkImage defaultNormalImage;
+	VkDeviceMemory defaultNormalImageMemory;
+	VkImageView defaultNormalImageView;
 
 	void initWindow() {
 		glfwInit();
@@ -635,6 +643,10 @@ private:
 		createSampler(textureSampler);
 		createTextureImage(defaultImage, defaultImageMemory, "default.png");
 		defaultImageView = createImageView(defaultImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
+
+		createTextureImage(defaultNormalImage, defaultNormalImageMemory, "defaultNormal.png", VK_FORMAT_R8G8B8A8_UNORM);
+		defaultNormalImageView = createImageView(defaultNormalImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT);
+
 		loadAllTextures();
 
 		createCubemap(cubemapImage, cubemapImageMemory, environment.radiance.src, cubemap);
@@ -705,7 +717,7 @@ private:
 	void loadAllTextures() {
 		for (auto& material : materials) {
 			// load normal maps
-			loadTexture(material.normalMap, material.normalMap.src);
+			loadTexture(material.normalMap, material.normalMap.src, VK_FORMAT_R8G8B8A8_UNORM);
 			loadTexture(material.displacementMap, material.displacementMap.src);
 
 			// load textures
@@ -730,15 +742,15 @@ private:
 		}
 	}
 
-	void loadTexture(Texture& texture, const std::string& fileName) {
+	void loadTexture(Texture& texture, const std::string& fileName, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB) {
 		if (fileName.empty()) {
 			return;
 		}
 		texture.src = fileName;
 
 		// put texture creation process together
-		createTextureImage(texture.image, texture.memory, fileName);
-		texture.imageView = createImageView(texture.image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
+		createTextureImage(texture.image, texture.memory, fileName, format);
+		texture.imageView = createImageView(texture.image, format, VK_IMAGE_ASPECT_COLOR_BIT);
 		texture.sampler = textureSampler;
 	}
 
@@ -947,7 +959,7 @@ private:
 		}
 	}
 
-	void createTextureImage(VkImage& textureImage, VkDeviceMemory& textureImageMemory, std::string fileName) {
+	void createTextureImage(VkImage& textureImage, VkDeviceMemory& textureImageMemory, std::string fileName, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB) {
 		int texWidth, texHeight, texChannels;
 		std::string fullPath = "./model/" + fileName;
 		stbi_uc* pixels = stbi_load(fullPath.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
@@ -972,14 +984,14 @@ private:
 		// clean up pixel array
 		stbi_image_free(pixels);
 
-		createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage, textureImageMemory);
+		createImage(texWidth, texHeight, format, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage, textureImageMemory);
 
 		// Transition the texture image to VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
 		// Execute the buffer to image copy operation
-		transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		transitionImageLayout(textureImage, format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 		copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
 		// transition to prepare it for shader access
-		transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		transitionImageLayout(textureImage, format, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
 		// clean up buffer & memory
 		vkDestroyBuffer(device, stagingBuffer, nullptr);
@@ -1231,11 +1243,16 @@ private:
 				bufferInfo.offset = 0;
 				bufferInfo.range = sizeof(UniformBufferObject);
 
-				// give texture & normal map a default value if not using
+				// give texture & normal map a default value if not using an input texture
 				VkDescriptorImageInfo defaultImageInfo{};
 				defaultImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 				defaultImageInfo.imageView = defaultImageView;
 				defaultImageInfo.sampler = textureSampler;
+
+				VkDescriptorImageInfo defaultNormalImageInfo{};
+				defaultNormalImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				defaultNormalImageInfo.imageView = defaultNormalImageView;
+				defaultNormalImageInfo.sampler = textureSampler;
 
 				VkDescriptorImageInfo cubemapImageInfo{};
 				cubemapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -1272,7 +1289,7 @@ private:
 				descriptorWrites[2].dstArrayElement = 0;
 				descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 				descriptorWrites[2].descriptorCount = 1;
-				descriptorWrites[2].pImageInfo = &defaultImageInfo;
+				descriptorWrites[2].pImageInfo = &defaultNormalImageInfo;
 
 				if (std::holds_alternative<Lambertian>(material.materialType)) {
 					Lambertian& lambertian = std::get<Lambertian>(material.materialType);
@@ -3015,6 +3032,10 @@ private:
 		vkDestroyImageView(device, defaultImageView, nullptr);
 		vkDestroyImage(device, defaultImage, nullptr);
 		vkFreeMemory(device, defaultImageMemory, nullptr);
+
+		vkDestroyImageView(device, defaultNormalImageView, nullptr);
+		vkDestroyImage(device, defaultNormalImage, nullptr);
+		vkFreeMemory(device, defaultNormalImageMemory, nullptr);
 
 		vkDestroyImageView(device, cubemapImageView, nullptr);
 		vkDestroyImage(device, cubemapImage, nullptr);
