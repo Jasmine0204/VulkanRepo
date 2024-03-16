@@ -15,9 +15,30 @@ layout(binding = 0) uniform UniformBufferObject {
 } ubo;
 
 layout(binding = 1) uniform sampler2D texSampler;
+
 layout(binding = 2) uniform sampler2D normalMap;
+
 layout(binding = 3) uniform samplerCube envMap;
+
 layout(binding = 4) uniform samplerCube lambertianMap;
+
+struct Light{
+    vec4 tint;
+	// 0 Sun, 1 Sphere, 2 Spot
+	int lightType;
+	float angle;
+	float strength;
+	float radius;
+	float power;
+	float fov;
+	float blend;
+	float limit;
+	int shadow;
+};
+
+layout(binding = 5) buffer lightBuffer {
+	Light lights[];
+} lightData;
 
 layout(push_constant) uniform PushConstants {
     mat4 model;
@@ -79,6 +100,12 @@ vec3 gammaCorrect(vec3 color) {
     return pow(color, vec3(1.0 / gamma));
 }
 
+float calculateSunlightEffect(float angle, vec3 lightDirection, vec3 normal) {
+    float lightEffect = max(dot(normal, lightDirection), 0.0);
+    lightEffect *= (angle / 3.14159265);
+    return lightEffect;
+}
+
 
 void main() {
     vec3 albedo;
@@ -103,11 +130,19 @@ void main() {
        vec3 ambient = toneMappingFilmic(envColor); 
        ambient = adjustSaturation(ambient, 1.2);
 
-       vec3 lightDir = normalize(vec3(1,1,1));
-       float NdotL = max(dot(normal, lightDir), 0.0);
-       vec3 diffuse = vec3(1, 1, 1) * NdotL;
+       vec3 diffuse = vec3(0.0);
 
-       outColor = vec4((ambient + diffuse) * albedo, 1.0);
+       for(int i = 0; i < 1; i++) {
+        // sun light
+        if(lightData.lights[i].lightType == 0) {
+           vec3 lightDir = normalize(vec3(1,1,1));
+           float sunlightEffect = calculateSunlightEffect(lightData.lights[i].angle, lightDir, normal);
+           float NdotL = max(dot(normal, lightDir), 0.0);
+           diffuse = sunlightEffect * lightData.lights[i].tint.rgb * lightData.lights[i].strength;
+           }
+        }
+
+      outColor = vec4((ambient + diffuse) * albedo, 1.0);
 
     } 
     // mirror

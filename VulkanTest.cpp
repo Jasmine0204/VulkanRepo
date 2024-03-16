@@ -61,8 +61,9 @@
 // https://en.wikipedia.org/wiki/Relative_luminance adjust vibrance after tone-mapping
 // https://architextures.org/textures free educational use textures
 // 
-// A3 Reference list (more detailed citations are commented together with code blocks that are inspired by corresponding reference)
+// A3 Reference list (more detailed citations are commented together with code blocks that are inspired by corresponding reference, search "Citation" to check exact locations)
 // https://www.opengl-tutorial.org/intermediate-tutorials/tutorial-16-shadow-mapping/ A very detailed tutorial that go through each step of creating shadow map in OpenGL.
+// https://vkguide.dev/docs/chapter-4/storage_buffers/ An instruction of using storage buffer in Vulkan
 
 uint32_t WIDTH = 1280;
 uint32_t HEIGHT = 720;
@@ -300,7 +301,6 @@ struct BoundingBox {
 			isSimple = false;
 		}
 
-
 		if (!isSimple) {
 			std::vector<Vertex> vertices = parseVertices(attr.src, mesh);
 			for (const auto& point : vertices) {
@@ -521,6 +521,10 @@ private:
 	VkDeviceMemory defaultNormalImageMemory;
 	VkImageView defaultNormalImageView;
 
+	// light data buffer
+	VkBuffer lightBuffer;
+	VkDeviceMemory lightBufferMemory;
+
 	void initWindow() {
 		glfwInit();
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -665,11 +669,11 @@ private:
 
 		createFramebuffers();
 
-
 		createVertexBuffersForAllMeshes(sceneGraph.meshes);
-		// BUG
-		//createIndexBuffer();
 
+		createLightBuffer();
+		
+		//createIndexBuffer();
 
 
 		createUniformBuffer();
@@ -679,7 +683,7 @@ private:
 
 		createCommandBuffers(swapChainCommandBuffers);
 		createSyncObjects();
-		
+
 	}
 
 	// skip window creation and swapchain
@@ -1264,7 +1268,12 @@ private:
 				lambertianCubemapImageInfo.imageView = lambertianCubemapImageView;
 				lambertianCubemapImageInfo.sampler = textureSampler;
 
-				std::array<VkWriteDescriptorSet, 5> descriptorWrites{};
+				VkDescriptorBufferInfo lightBufferInfo{};
+				lightBufferInfo.buffer = lightBuffer;
+				lightBufferInfo.offset = 0;
+				lightBufferInfo.range = sizeof(Light) * lights.size();
+
+				std::array<VkWriteDescriptorSet, 6> descriptorWrites{};
 
 				descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 				descriptorWrites[0].dstSet = descriptorSet;
@@ -1359,6 +1368,14 @@ private:
 				descriptorWrites[4].descriptorCount = 1;
 				descriptorWrites[4].pImageInfo = &lambertianCubemapImageInfo;
 
+				descriptorWrites[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+				descriptorWrites[5].dstSet = descriptorSets[descriptorIndex];
+				descriptorWrites[5].dstBinding = 5;
+				descriptorWrites[5].dstArrayElement = 0;
+				descriptorWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+				descriptorWrites[5].descriptorCount = 1;
+				descriptorWrites[5].pBufferInfo = &lightBufferInfo;
+
 				vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 			}
 		}
@@ -1367,24 +1384,31 @@ private:
 	void createDescriptorPool() {
 		//  allocate one of these descriptors for every frame
 		size_t totalMaterials = materials.size();
-		std::array<VkDescriptorPoolSize, 5> poolSizes{};
+		std::array<VkDescriptorPoolSize, 6> poolSizes{};
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
+
 		poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
+
 		poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		poolSizes[2].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
+
 		poolSizes[3].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		poolSizes[3].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
+
 		poolSizes[4].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		poolSizes[4].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
+
+		poolSizes[5].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		poolSizes[5].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
 
 
 		VkDescriptorPoolCreateInfo poolInfo{};
 		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 		poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
 		poolInfo.pPoolSizes = poolSizes.data();
-		poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * 5);
+		poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * 6);
 
 		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create descriptor pool!");
@@ -1454,8 +1478,16 @@ private:
 		lambertianCubemapLayoutBinding.pImmutableSamplers = nullptr;
 		lambertianCubemapLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+		// light buffer
+		VkDescriptorSetLayoutBinding lightLayoutBinding{};
+		lightLayoutBinding.binding = 5;
+		lightLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		lightLayoutBinding.descriptorCount = 1;
+		lightLayoutBinding.pImmutableSamplers = nullptr;
+		lightLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-		std::array<VkDescriptorSetLayoutBinding, 5> bindings = { uboLayoutBinding, samplerLayoutBinding, normalmapLayoutBinding, cubemapLayoutBinding, lambertianCubemapLayoutBinding };
+
+		std::array<VkDescriptorSetLayoutBinding, 6> bindings = { uboLayoutBinding, samplerLayoutBinding, normalmapLayoutBinding, cubemapLayoutBinding, lambertianCubemapLayoutBinding, lightLayoutBinding };
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
 		layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -1514,6 +1546,37 @@ private:
 		}
 
 		vkBindBufferMemory(device, buffer, bufferMemory, 0);
+	}
+
+
+	void createLightBuffer() {
+		// Citation: I referenced https://vkguide.dev/docs/chapter-4/storage_buffers/ and combined my existing code to create light buffer.
+		VkDeviceSize bufferSize;
+
+		bufferSize = sizeof(Light) * lights.size();
+		std::cout << lights[0].lightType << "\n";
+
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+		void* data;
+		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+
+		memcpy(data, lights.data(), (size_t)bufferSize);
+
+		vkUnmapMemory(device, stagingBufferMemory);
+
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, lightBuffer, lightBufferMemory);
+		// VK_BUFFER_USAGE_TRANSFER_SRC_BIT: Buffer can be used as source in a memory transfer operation.
+		// VK_BUFFER_USAGE_TRANSFER_DST_BIT: Buffer can be used as destination in a memory transfer operation.
+
+		// copy data from the stagingBuffer to the lightBuffer
+		copyBuffer(stagingBuffer, lightBuffer, bufferSize);
+
+		//clean up
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
 	}
 
 	void createVertexBuffer(Mesh& mesh) {
@@ -1897,10 +1960,10 @@ private:
 			int stride = attr.stride;
 
 			if (stride == 52) {
-			materialIndex = sceneGraph.materialIndexMap.at(mesh.material);
-			material = sceneGraph.materials.at(materialIndex);
-			materialType = material.getMaterialType();
-			}		
+				materialIndex = sceneGraph.materialIndexMap.at(mesh.material);
+				material = sceneGraph.materials.at(materialIndex);
+				materialType = material.getMaterialType();
+			}
 		}
 
 		// calculate descriptor set index 
@@ -2931,13 +2994,13 @@ private:
 		if (isDebugCameraActive) {
 			ubo.view = debugCamera.GetViewMatrix();
 			ubo.projection = debugCamera.GetProjectionMatrix();
-			ubo.cameraPos = glm::vec4(debugCamera.Position,0);
+			ubo.cameraPos = glm::vec4(debugCamera.Position, 0);
 
 		}
 		else if (isUserCameraActive) {
 			ubo.view = userCamera.GetViewMatrix();
 			ubo.projection = userCamera.GetProjectionMatrix();
-			ubo.cameraPos = glm::vec4(userCamera.Position,0);
+			ubo.cameraPos = glm::vec4(userCamera.Position, 0);
 		}
 		else if (isRenderCameraActive) {
 			Camera sceneCamera = cameras[0];
@@ -2947,14 +3010,11 @@ private:
 			renderCamera.AspectRatio = sceneCamera.perspective.aspect;
 			ubo.view = renderCamera.GetViewMatrix();
 			ubo.projection = renderCamera.GetProjectionMatrix();
-			ubo.cameraPos = glm::vec4(renderCamera.Position,0);
+			ubo.cameraPos = glm::vec4(renderCamera.Position, 0);
 
 		}
 
 		ubo.projection[1][1] *= -1;
-
-		
-
 
 		// GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted;
 
@@ -2980,9 +3040,9 @@ private:
 	void cleanupAllTextures(std::vector<Material>& materials) {
 		for (auto& material : materials) {
 			int materialType = material.getMaterialType();
-			std::cout << "material type" << materialType << "\n";
+			//std::cout << "material type" << materialType << "\n";
 			if (materialType != 0) {
-				
+
 				/*if (material.displacementMap.image != VK_NULL_HANDLE) {
 					cleanupTexture(material.displacementMap);
 				}*/
@@ -3009,7 +3069,7 @@ private:
 				if (materialType == 1) {
 					// clean normal maps (displacement
 					if (material.normalMap.image != VK_NULL_HANDLE) {
-					cleanupTexture(material.normalMap);
+						cleanupTexture(material.normalMap);
 					}
 					Lambertian& lambertian = std::get<Lambertian>(material.materialType);
 					if (std::holds_alternative<Texture>(lambertian.albedo)) {
@@ -3052,6 +3112,9 @@ private:
 
 		vkDestroyDescriptorPool(device, descriptorPool, nullptr);
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
+
+		vkDestroyBuffer(device, lightBuffer, nullptr);
+		vkFreeMemory(device, lightBufferMemory, nullptr);
 
 		vkDestroyBuffer(device, indexBuffer, nullptr);
 		vkFreeMemory(device, indexBufferMemory, nullptr);

@@ -28,30 +28,18 @@
 
 // define structs
 
-struct Sun {
-	float angle;
-	float strength;
-};
-
-struct Sphere {
-	float radius;
-	float power;
-	float limit;
-};
-
-struct Spot {
-	float radius;
-	float power;
-	float fov;
-	float blend;
-	float limit;
-};
-
 struct Light {
-	std::string name;
-	glm::vec3 tint;
-	std::variant<Sun, Sphere, Spot, std::monostate> lightType;
-	int shadow;
+	glm::vec4 tint;
+	// 0 Sun, 1 Sphere, 2 Spot
+	int lightType = -1;
+	float angle = -1.0;
+	float strength = -1.0;
+	float radius = -1.0;;
+	float power = -1.0;;
+	float fov = -1.0;;
+	float blend = -1.0;;
+	float limit = -1.0;;
+	int shadow = 0.0;
 };
 
 struct Mirror {};
@@ -542,14 +530,14 @@ private:
 			skipWhitespace(str, pos);
 
 			if (key == "name") {
-				light.name = parseString(str, pos);
+				std::string name = parseString(str, pos);
 
 			}
 			else if (key == "tint") {
-				light.tint = parseVec3(str, pos);
+				glm::vec3 tint = parseVec3(str, pos);
+				light.tint = glm::vec4(tint, 1.0f);
 			}
 			else if (key == "sun") {
-				Sun sun;
 				skipWhitespace(str, pos);
 
 				if (str[pos] != '{') {
@@ -575,21 +563,20 @@ private:
 					pos++; // Skip colon
 					skipWhitespace(str, pos);
 					if (key == "angle") {
-						sun.angle = static_cast<float>(parseDouble(str, pos));
+						light.angle = static_cast<float>(parseDouble(str, pos));
 					}
 					else if (key == "strength") {
-						sun.strength = static_cast<float>(parseDouble(str, pos));
+						light.strength = static_cast<float>(parseDouble(str, pos));
 					}
 
 					if (str[pos] == ',') {
 						pos++; // Move to next key
 					}
 
-					light.lightType = sun;
+					light.lightType = 0;
 				}
 			}
 			else if (key == "sphere") {
-				Sphere sphere;
 				skipWhitespace(str, pos);
 
 				if (str[pos] != '{') {
@@ -612,23 +599,22 @@ private:
 					}
 					pos++; // Skip colon
 					skipWhitespace(str, pos);
-					if (key == "radius") { sphere.radius = static_cast<float>(parseDouble(str, pos)); }
+					if (key == "radius") { light.radius = static_cast<float>(parseDouble(str, pos)); }
 					else if (key == "power") {
-						sphere.power = static_cast<float>(parseDouble(str, pos));
+						light.power = static_cast<float>(parseDouble(str, pos));
 					}
 					else if (key == "limit") {
-						sphere.limit = static_cast<float>(parseDouble(str, pos));
+						light.limit = static_cast<float>(parseDouble(str, pos));
 					}
 
 					if (str[pos] == ',') {
 						pos++; // Move to next key
 					}
 
-					light.lightType = sphere;
+					light.lightType = 1;
 				}
 			}
 			else if (key == "spot") {
-				Spot spot;
 				skipWhitespace(str, pos);
 
 				if (str[pos] != '{') {
@@ -651,25 +637,25 @@ private:
 					}
 					pos++; // Skip colon
 					skipWhitespace(str, pos);
-					if (key == "radius") { spot.radius = static_cast<float>(parseDouble(str, pos)); }
+					if (key == "radius") { light.radius = static_cast<float>(parseDouble(str, pos)); }
 					else if (key == "power") {
-						spot.power = static_cast<float>(parseDouble(str, pos));
+						light.power = static_cast<float>(parseDouble(str, pos));
 					}
 					else if (key == "fov") {
-						spot.fov = static_cast<float>(parseDouble(str, pos));
+						light.fov = static_cast<float>(parseDouble(str, pos));
 					}
 					else if (key == "blend") {
-						spot.blend = static_cast<float>(parseDouble(str, pos));
+						light.blend = static_cast<float>(parseDouble(str, pos));
 					}
 					else if (key == "limit") {
-						spot.limit = static_cast<float>(parseDouble(str, pos));
+						light.limit = static_cast<float>(parseDouble(str, pos));
 					}
 
 					if (str[pos] == ',') {
 						pos++; // Move to next key
 					}
 
-					light.lightType = spot;
+					light.lightType = 2;
 				}
 			}
 			else if (key == "shadow") { light.shadow = parseInt(str, pos); }
