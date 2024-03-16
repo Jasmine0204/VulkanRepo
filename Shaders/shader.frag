@@ -102,7 +102,7 @@ vec3 gammaCorrect(vec3 color) {
 
 float calculateSunlightEffect(float angle, vec3 lightDirection, vec3 normal) {
     float lightEffect = max(dot(normal, lightDirection), 0.0);
-    lightEffect *= (angle / 3.14159265);
+    lightEffect *= (1.0 + angle / 3.14159265);
     return lightEffect;
 }
 
@@ -138,7 +138,7 @@ void main() {
            vec3 lightDir = normalize(vec3(1,1,1));
            float sunlightEffect = calculateSunlightEffect(lightData.lights[i].angle, lightDir, normal);
            float NdotL = max(dot(normal, lightDir), 0.0);
-           diffuse = sunlightEffect * lightData.lights[i].tint.rgb * lightData.lights[i].strength;
+           diffuse = sunlightEffect * NdotL * lightData.lights[i].tint.rgb * lightData.lights[i].strength;
            }
         }
 
