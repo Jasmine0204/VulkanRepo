@@ -33,6 +33,7 @@ struct Light{
 	float fov;
 	float blend;
 	float limit;
+    vec4 position;
 	int shadow;
 };
 
@@ -100,12 +101,6 @@ vec3 gammaCorrect(vec3 color) {
     return pow(color, vec3(1.0 / gamma));
 }
 
-float calculateSunlightEffect(float angle, vec3 lightDirection, vec3 normal) {
-    float lightEffect = max(dot(normal, lightDirection), 0.0);
-    lightEffect *= (1.0 + angle / 3.14159265);
-    return lightEffect;
-}
-
 
 void main() {
     vec3 albedo;
@@ -136,9 +131,17 @@ void main() {
         // sun light
         if(lightData.lights[i].lightType == 0) {
            vec3 lightDir = normalize(vec3(1,1,1));
-           float sunlightEffect = calculateSunlightEffect(lightData.lights[i].angle, lightDir, normal);
            float NdotL = max(dot(normal, lightDir), 0.0);
-           diffuse = sunlightEffect * NdotL * lightData.lights[i].tint.rgb * lightData.lights[i].strength;
+           diffuse = diffuse + NdotL * lightData.lights[i].tint.rgb * lightData.lights[i].strength * (1.0 + lightData.lights[i].angle / 3.14159265);
+           } 
+           // sphere light
+           else if (lightData.lights[i].lightType == 1){
+           vec3 lightDir = normalize(lightData.lights[i].position.xyz - fragPos);
+           float distance = length(lightData.lights[i].position.xyz - fragPos);
+           float attenuation = max(0.0, 1.0 - distance / lightData.lights[i].limit);
+
+           float NdotL = max(dot(normal, lightDir), 0.0);
+            vec3 diffuse = diffuse + NdotL * lightData.lights[i].tint.rgb * lightData.lights[i].power * attenuation;
            }
         }
 
@@ -173,9 +176,20 @@ void main() {
        vec3 normal = normalize(fragTBN * normalMap);
 
        vec3 viewDir = normalize(ubo.cameraPos.xyz - fragPos);
-       vec3 lightDir = normalize(vec3(1,1,1));
-       vec3 h = normalize(viewDir + lightDir);
 
+       vec3 diffuse = vec3(0.0);
+       vec3 lightDir = normalize(vec3(1,1,1));
+
+       for(int i = 0; i < 1; i++) {
+        // sun light
+        if(lightData.lights[i].lightType == 0) {
+           lightDir = normalize(vec3(1,1,1));
+           float NdotL = max(dot(normal, lightDir), 0.0);
+           diffuse = diffuse + NdotL * lightData.lights[i].tint.rgb * lightData.lights[i].strength * (1.0 + lightData.lights[i].angle / 3.14159265);
+           }
+        }
+       //vec3 lightDir = normalize(vec3(1,1,1));
+       vec3 h = normalize(viewDir + lightDir);
 
        vec3 F0 = mix(vec3(0.04), albedo.rgb, metalness);
        vec3 F = fresnelSchlick(max(dot(h, viewDir), 0.0), F0);
@@ -193,8 +207,8 @@ void main() {
        vec3 kD = vec3(1.0) - kS;
        kD *= 1.0 - metalness;
 
-       float NdotL = max(dot(normal, lightDir), 0.0);
-       vec3 diffuse = (albedo / 3.14159265359) * kD * NdotL;
+       //float NdotL = max(dot(normal, lightDir), 0.0);
+       diffuse = diffuse * (albedo / 3.14159265) * kD;
 
        vec3 reflectDir = reflect(viewDir, normal);
        vec3 mirrorColor = texture(envMap, -reflectDir).rgb;

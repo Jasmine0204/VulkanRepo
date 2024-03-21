@@ -80,7 +80,7 @@ std::string outputFile = "./model/sky_diffuse.png";
 struct CommandLineOptions {
 	bool headless = false;
 	std::string drawingSize;
-	std::string sceneFile = "./model/env-cube.s72";
+	std::string sceneFile = "./model/A2-Create.s72";
 	std::string eventFile = "./model/events.txt";
 	bool lambertian = false;
 	std::string inputFile = "./model/ox_bridge_morning.png";
@@ -95,7 +95,7 @@ const std::vector<Node>& nodes = sceneGraph.getNodes();
 const std::vector<Camera>& cameras = sceneGraph.getCameras();
 const std::vector<AnimationClip>& clips = sceneGraph.getClips();
 std::vector<Material>& materials = sceneGraph.getMaterials();
-const std::vector<Light>& lights = sceneGraph.getLights();
+std::vector<Light>& lights = sceneGraph.getLights();
 const Scene& scene = sceneGraph.getScene();
 const Environment& environment = sceneGraph.getEnvironment();
 
@@ -2028,6 +2028,11 @@ private:
 			renderCameraPosition = node.translation;
 			renderCameraPitch = quatToPitch(node.rotation.w, node.rotation.x, node.rotation.y, node.rotation.z);
 			renderCameraYaw = quatToYaw(node.rotation.x, node.rotation.y, node.rotation.z, node.rotation.w) + 90.0f;
+		}
+
+		if (node.light >= 0) {
+			int containerIndex = sceneGraph.lightIndexMap[node.light];
+			lights[containerIndex].position = glm::vec4(node.translation, 0.0);
 		}
 
 		// recursively render children nodes

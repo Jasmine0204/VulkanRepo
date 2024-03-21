@@ -39,6 +39,7 @@ struct Light {
 	float fov = -1.0;;
 	float blend = -1.0;;
 	float limit = -1.0;;
+	glm::vec4 position = glm::vec4(0.0);
 	int shadow = 0.0;
 };
 
@@ -366,7 +367,7 @@ public:
 	const std::vector<Mesh>& getMeshes() const { return meshes; }
 	const std::vector<Node>& getNodes() const { return nodes; }
 	std::vector<Material>& getMaterials() { return materials; }
-	const std::vector<Light>& getLights() { return lights; }
+	std::vector<Light>& getLights() { return lights; }
 	const std::vector<Camera>& getCameras() const { return cameras; }
 	const Environment& getEnvironment() const { return environment; }
 	const std::vector<AnimationClip>& getClips() const { return clips; }
@@ -1083,7 +1084,7 @@ private:
 				node.environment = parseInt(str, pos);
 			}
 			else if (key == "light") {
-				node.light = parseInt(str, pos);
+				node.light = parseInt(str, pos);		
 			}
 
 			skipWhitespace(str, pos);
