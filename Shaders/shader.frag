@@ -14,6 +14,7 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 cameraPos;
 } ubo;
 
+
 layout(binding = 1) uniform sampler2D texSampler;
 
 layout(binding = 2) uniform sampler2D normalMap;
@@ -24,17 +25,19 @@ layout(binding = 4) uniform samplerCube lambertianMap;
 
 struct Light{
     vec4 tint;
+    vec4 position;
+
 	// 0 Sun, 1 Sphere, 2 Spot
 	int lightType;
+    int shadow;
+
 	float angle;
 	float strength;
 	float radius;
 	float power;
 	float fov;
 	float blend;
-	float limit;
-    vec4 position;
-	int shadow;
+	float limit;  
 };
 
 layout(binding = 5) buffer lightBuffer {
@@ -47,6 +50,7 @@ layout(push_constant) uniform PushConstants {
 	float roughness;
 	float metalness;
 	int materialType;
+    int lightCount;
 } pushConstants;
 
 vec3 toneMappingFilmic(vec3 color) {
@@ -101,6 +105,37 @@ vec3 gammaCorrect(vec3 color) {
     return pow(color, vec3(1.0 / gamma));
 }
 
+vec3 computeRepresentativePoint(vec3 lightPos, float lightRadius, vec3 fragPos, vec3 viewDir, vec3 normal) {
+    vec3 O = fragPos; // origin
+    vec3 D = reflect(-viewDir, normal); // direction
+    vec3 C = lightPos; // sphere origin
+    float r = lightRadius; // sphere radius
+
+    // Citation: Refer to the basic idea of ray-sphere intersection in this tutorial https://raytracing.github.io/books/RayTracingInOneWeekend.html#addingasphere/ray-sphereintersection
+    vec3 L = O - C;
+    float a = dot(D, D);
+    float b = 2.0 * dot(D, L);
+    float c = dot(L, L) - r * r;
+
+    float discriminant = b*b - 4.0*a*c;
+
+    if (discriminant < 0.0) {
+        return vec3(0.0); // no root
+    }
+
+    float t1 = (-b - sqrt(discriminant)) / (2.0 * a);
+    float t2 = (-b + sqrt(discriminant)) / (2.0 * a);
+
+    float t = min(t1, t2);
+    if (t < 0.0) t = max(t1, t2); 
+    if (t < 0.0) {
+        return vec3(0.0);
+    }
+
+    vec3 P = O + t * D;
+    return P;
+}
+
 
 void main() {
     vec3 albedo;
@@ -127,21 +162,31 @@ void main() {
 
        vec3 diffuse = vec3(0.0);
 
-       for(int i = 0; i < 1; i++) {
-        // sun light
-        if(lightData.lights[i].lightType == 0) {
-           vec3 lightDir = normalize(vec3(1,1,1));
-           float NdotL = max(dot(normal, lightDir), 0.0);
-           diffuse = diffuse + NdotL * lightData.lights[i].tint.rgb * lightData.lights[i].strength * (1.0 + lightData.lights[i].angle / 3.14159265);
-           } 
-           // sphere light
-           else if (lightData.lights[i].lightType == 1){
-           vec3 lightDir = normalize(lightData.lights[i].position.xyz - fragPos);
-           float distance = length(lightData.lights[i].position.xyz - fragPos);
-           float attenuation = max(0.0, 1.0 - distance / lightData.lights[i].limit);
+       for(int i = 0; i < pushConstants.lightCount; i++) {
 
+        Light light = lightData.lights[i];
+
+        vec3 lightDir;
+        float distance;
+        float attenuation;
+
+        // sun light
+        if(light.lightType == 0) {
+           lightDir = normalize(vec3(1,1,1));
            float NdotL = max(dot(normal, lightDir), 0.0);
-            vec3 diffuse = diffuse + NdotL * lightData.lights[i].tint.rgb * lightData.lights[i].power * attenuation;
+           diffuse = diffuse + NdotL * light.tint.rgb * light.strength * (1.0 + light.angle / 3.14159265);
+           } 
+        // sphere light
+        else if (light.lightType == 1){
+          lightDir = normalize(light.position.xyz - fragPos);
+           distance = length(light.position.xyz - fragPos);
+           float radius = light.radius;
+
+           float effectiveDistance = max(distance - radius, 0.0);
+           attenuation = max(0.0, 1.0 - pow((effectiveDistance / light.limit), 4));
+            
+           float NdotL = max(dot(normal, lightDir), 0.0);
+           diffuse += NdotL * light.tint.rgb * light.power * attenuation;
            }
         }
 
@@ -176,39 +221,82 @@ void main() {
        vec3 normal = normalize(fragTBN * normalMap);
 
        vec3 viewDir = normalize(ubo.cameraPos.xyz - fragPos);
+       vec3 lightDir;
 
        vec3 diffuse = vec3(0.0);
-       vec3 lightDir = normalize(vec3(1,1,1));
+       vec3 specular = vec3(0.0);
 
-       for(int i = 0; i < 1; i++) {
+       for(int i = 0; i < pushConstants.lightCount; i++) {
+        Light light = lightData.lights[i];
+
+        
+        float distance;
+        float attenuation;
+
         // sun light
-        if(lightData.lights[i].lightType == 0) {
+        if(light.lightType == 0) {
            lightDir = normalize(vec3(1,1,1));
            float NdotL = max(dot(normal, lightDir), 0.0);
-           diffuse = diffuse + NdotL * lightData.lights[i].tint.rgb * lightData.lights[i].strength * (1.0 + lightData.lights[i].angle / 3.14159265);
+           diffuse += NdotL * light.tint.rgb * light.strength * (1.0 + light.angle / 3.14159265);
+
+           vec3 h = normalize(viewDir + lightDir);
+
+           vec3 F0 = mix(vec3(0.04), albedo.rgb, metalness);
+           vec3 F = fresnelSchlick(max(dot(h, viewDir), 0.0), F0);
+
+           float adjustedRoughness = max(roughness, 0.05);
+
+           float D = distributionGGX(normal, h, adjustedRoughness);    
+           float G = geometrySmith(normal, viewDir, lightDir, adjustedRoughness);  
+
+           vec3 nominator = D * F * G;
+           float denominator = 4.0 * max(dot(normal, viewDir), 0.0) * max(dot(normal, lightDir), 0.0);
+           specular += nominator / max(denominator, 0.001); 
+
+           vec3 kS = F;
+           vec3 kD = vec3(1.0) - kS;
+           kD *= 1.0 - metalness;
+
+           diffuse *= (albedo / 3.14159265) * kD;
+        } 
+        // sphere lights
+        else if (light.lightType == 1){
+           lightDir = normalize(light.position.xyz - fragPos);
+           distance = length(light.position.xyz - fragPos);
+           float radius = light.radius;
+
+           float effectiveDistance = max(distance - radius, 0.0);
+           attenuation = max(0.0, 1.0 - pow((effectiveDistance / light.limit), 4));
+            
+           float NdotL = max(dot(normal, lightDir), 0.0);
+           diffuse += NdotL * light.tint.rgb * light.power * attenuation;
+
+           // compute new light dir for specular
+           vec3 representativePoint = normalize(computeRepresentativePoint(light.position.xyz, light.radius, fragPos, viewDir, normal));
+           lightDir = normalize(representativePoint - fragPos);
+
+           vec3 h = normalize(viewDir + lightDir);
+
+           vec3 F0 = mix(vec3(0.04), albedo.rgb, metalness);
+           vec3 F = fresnelSchlick(max(dot(h, viewDir), 0.0), F0);
+
+           float adjustedRoughness = max(roughness, 0.05);
+
+           float D = distributionGGX(normal, h, adjustedRoughness);    
+           float G = geometrySmith(normal, viewDir, lightDir, adjustedRoughness);  
+
+           vec3 nominator = D * F * G;
+           float denominator = 4.0 * max(dot(normal, viewDir), 0.0) * max(dot(normal, lightDir), 0.0);
+           specular += nominator / max(denominator, 0.001) * light.tint.rgb * light.power * attenuation; 
+
+           vec3 kS = F;
+           vec3 kD = vec3(1.0) - kS;
+           kD *= 1.0 - metalness;
+
+           diffuse *= (albedo / 3.14159265) * kD;
            }
-        }
-       //vec3 lightDir = normalize(vec3(1,1,1));
-       vec3 h = normalize(viewDir + lightDir);
+     }
 
-       vec3 F0 = mix(vec3(0.04), albedo.rgb, metalness);
-       vec3 F = fresnelSchlick(max(dot(h, viewDir), 0.0), F0);
-
-       float adjustedRoughness = max(roughness, 0.05);
-
-       float D = distributionGGX(normal, h, adjustedRoughness);    
-       float G = geometrySmith(normal, viewDir, lightDir, adjustedRoughness);  
-
-       vec3 nominator = D * F * G;
-       float denominator = 4.0 * max(dot(normal, viewDir), 0.0) * max(dot(normal, lightDir), 0.0);
-       vec3 specular = nominator / max(denominator, 0.001); 
-
-       vec3 kS = F;
-       vec3 kD = vec3(1.0) - kS;
-       kD *= 1.0 - metalness;
-
-       //float NdotL = max(dot(normal, lightDir), 0.0);
-       diffuse = diffuse * (albedo / 3.14159265) * kD;
 
        vec3 reflectDir = reflect(viewDir, normal);
        vec3 mirrorColor = texture(envMap, -reflectDir).rgb;
@@ -222,7 +310,5 @@ void main() {
 
        outColor = vec4(diffuse + specular + ambient * albedo, 1.0);
     }
-
-  
 }
 

@@ -64,6 +64,7 @@
 // A3 Reference list (more detailed citations are commented together with code blocks that are inspired by corresponding reference, search "Citation" to check exact locations)
 // https://www.opengl-tutorial.org/intermediate-tutorials/tutorial-16-shadow-mapping/ A very detailed tutorial that go through each step of creating shadow map in OpenGL.
 // https://vkguide.dev/docs/chapter-4/storage_buffers/ An instruction of using storage buffer in Vulkan
+// https://raytracing.github.io/books/RayTracingInOneWeekend.html#addingasphere/ray-sphereintersection For sphere light root solution(cited in fragment shader)
 
 uint32_t WIDTH = 1280;
 uint32_t HEIGHT = 720;
@@ -251,6 +252,7 @@ struct PushConstants {
 	float metalness;
 	int materialType;
 	// 0 for simple material, 1/2/3/4 for complex material
+	int lightCount;
 };
 
 struct QueueFamilyIndices {
@@ -1554,7 +1556,8 @@ private:
 		VkDeviceSize bufferSize;
 
 		bufferSize = sizeof(Light) * lights.size();
-		std::cout << lights[0].lightType << "\n";
+		//std::cout <<"Light Type:" << lights[1].lightType << "\n";
+		//std::cout <<"Light Power:" << lights[1].power << "\n";
 
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
@@ -1575,6 +1578,25 @@ private:
 		copyBuffer(stagingBuffer, lightBuffer, bufferSize);
 
 		//clean up
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
+	}
+
+	void updateLightBuffer(const std::vector<Light>& lights) {
+		VkDeviceSize bufferSize = sizeof(Light) * lights.size();
+
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+		void* data;
+		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+		memcpy(data, lights.data(), static_cast<size_t>(bufferSize));
+		vkUnmapMemory(device, stagingBufferMemory);
+
+		copyBuffer(stagingBuffer, lightBuffer, bufferSize);
+
 		vkDestroyBuffer(device, stagingBuffer, nullptr);
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
 	}
@@ -1997,6 +2019,7 @@ private:
 		}
 		pushConstants.model = modelMatrix;
 		pushConstants.materialType = materialType;
+		pushConstants.lightCount = lights.size();
 		vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants), &pushConstants);
 		updateUniformBuffer(currentFrame, nodeIndex);
 
@@ -2033,6 +2056,7 @@ private:
 		if (node.light >= 0) {
 			int containerIndex = sceneGraph.lightIndexMap[node.light];
 			lights[containerIndex].position = glm::vec4(node.translation, 0.0);
+			updateLightBuffer(lights);
 		}
 
 		// recursively render children nodes
@@ -2316,7 +2340,7 @@ private:
 		VkPushConstantRange pushConstantRange{};
 		pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;;
 		pushConstantRange.offset = 0;
-		pushConstantRange.size = 104;
+		pushConstantRange.size = 108;
 
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;

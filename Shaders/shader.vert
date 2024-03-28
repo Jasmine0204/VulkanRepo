@@ -12,6 +12,7 @@ layout(push_constant) uniform PushConstants {
 	float roughness;
 	float metalness;
 	int materialType;
+    int lightCount;
 } pushConstants;
 
 layout(location = 0) in vec3 inPosition;

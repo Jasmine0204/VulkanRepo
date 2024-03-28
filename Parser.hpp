@@ -30,17 +30,19 @@
 
 struct Light {
 	glm::vec4 tint;
+	glm::vec4 position = glm::vec4(0.0);	
+
 	// 0 Sun, 1 Sphere, 2 Spot
 	int lightType = -1;
+	int shadow = 0.0;
+
 	float angle = -1.0;
 	float strength = -1.0;
-	float radius = -1.0;;
-	float power = -1.0;;
-	float fov = -1.0;;
-	float blend = -1.0;;
-	float limit = -1.0;;
-	glm::vec4 position = glm::vec4(0.0);
-	int shadow = 0.0;
+	float radius = -1.0;
+	float power = -1.0;
+	float fov = -1.0;
+	float blend = -1.0;
+	float limit = -1.0;
 };
 
 struct Mirror {};
