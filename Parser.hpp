@@ -31,6 +31,7 @@
 struct Light {
 	glm::vec4 tint;
 	glm::vec4 position = glm::vec4(0.0);	
+	glm::vec4 rotation = glm::vec4(0.0);	
 
 	// 0 Sun, 1 Sphere, 2 Spot
 	int lightType = -1;

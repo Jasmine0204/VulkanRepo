@@ -2056,6 +2056,7 @@ private:
 		if (node.light >= 0) {
 			int containerIndex = sceneGraph.lightIndexMap[node.light];
 			lights[containerIndex].position = glm::vec4(node.translation, 0.0);
+			lights[containerIndex].rotation = glm::vec4(quatToVec(node.rotation),0.0);
 			updateLightBuffer(lights);
 		}
 
@@ -2068,6 +2069,15 @@ private:
 			}
 		}
 
+	}
+
+	glm::vec3 quatToVec(glm::quat q) {
+		glm::vec3 v = glm::vec3(0,0,-1);
+		glm::vec3 u = glm::vec3(q.x, q.y, q.z);
+		float s = q.w;
+		return 2.0f * glm::dot(u, v) * u
+			+ (s * s - glm::dot(u, u)) * v
+			+ 2.0f * s * glm::cross(u, v);
 	}
 
 	float quatToPitch(float w, float x, float y, float z) {

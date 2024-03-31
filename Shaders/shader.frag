@@ -26,6 +26,7 @@ layout(binding = 4) uniform samplerCube lambertianMap;
 struct Light{
     vec4 tint;
     vec4 position;
+    vec4 rotation;
 
 	// 0 Sun, 1 Sphere, 2 Spot
 	int lightType;
@@ -188,7 +189,14 @@ void main() {
            float NdotL = max(dot(normal, lightDir), 0.0);
            diffuse += NdotL * light.tint.rgb * light.power * attenuation;
            }
+        // spot light
+        else if (light.lightType == 2){
+            vec3 lightDir = normalize(light.position.xyz - fragPos);
+            float distance = length(light.position.xyz - fragPos);
+            vec3 spotLightDir = normalize(light.rotation.xyz);
+            float theta = dot(lightDir, normalize(-spotLightDir));
         }
+       }
 
       outColor = vec4((ambient + diffuse) * albedo, 1.0);
 
@@ -259,7 +267,7 @@ void main() {
 
            diffuse *= (albedo / 3.14159265) * kD;
         } 
-        // sphere lights
+        // sphere light
         else if (light.lightType == 1){
            lightDir = normalize(light.position.xyz - fragPos);
            distance = length(light.position.xyz - fragPos);
@@ -295,6 +303,13 @@ void main() {
 
            diffuse *= (albedo / 3.14159265) * kD;
            }
+        // spot light
+        else if (light.lightType == 2){
+            vec3 lightDir = normalize(light.position.xyz - fragPos);
+            float distance = length(light.position.xyz - fragPos);
+            vec3 spotLightDir = normalize(light.rotation.xyz);
+            float theta = dot(lightDir, normalize(-spotLightDir));
+        }
      }
 
 
