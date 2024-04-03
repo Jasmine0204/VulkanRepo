@@ -151,7 +151,7 @@ void main() {
     float roughness = pushConstants.roughness;
     float metalness = pushConstants.metalness;
     
-    // lambertian
+    // diffuse mat
     if (pushConstants.materialType == 1) {
        vec3 normalMap = texture(normalMap, fragTexCoord).rgb;
        normalMap = normalize(normalMap * 2.0 - 1.0);
@@ -195,6 +195,13 @@ void main() {
             float distance = length(light.position.xyz - fragPos);
             vec3 spotLightDir = normalize(light.rotation.xyz);
             float theta = dot(lightDir, normalize(-spotLightDir));
+
+            float epsilon = cos(light.fov) * (1.0 - light.blend) + light.blend;
+            float intensity = smoothstep(epsilon, 1.0, theta);
+
+            float attenuation = max(0.0, 1.0 - pow((distance - light.radius) / light.limit, 4.0));
+            float NdotL = max(dot(normal, lightDir), 0.0);
+            diffuse += NdotL * light.tint.rgb * light.power * attenuation * intensity;
         }
        }
 
@@ -205,9 +212,9 @@ void main() {
     else if (pushConstants.materialType == 2) 
     {
         vec3 normal = fragNorm;
-        vec3 viewDir = normalize(ubo.cameraPos.xyz - fragPos);
+        vec3 viewDir = normalize(fragPos - ubo.cameraPos.xyz);
         vec3 reflectDir = reflect(viewDir, normal);
-        envColor = texture(envMap, -reflectDir).rgb;
+        envColor = texture(envMap, reflectDir).rgb;
         vec3 ldrColor = toneMappingFilmic(envColor); 
         ldrColor = adjustSaturation(ldrColor, 1.2);
         outColor = vec4(ldrColor,0);
@@ -237,10 +244,10 @@ void main() {
        for(int i = 0; i < pushConstants.lightCount; i++) {
         Light light = lightData.lights[i];
 
-        
         float distance;
         float attenuation;
 
+        // Citation: The code structure of different light types is inspired by LearnOpenGL https://learnopengl.com/Lighting/Light-casters
         // sun light
         if(light.lightType == 0) {
            lightDir = normalize(vec3(1,1,1));
@@ -308,7 +315,34 @@ void main() {
             vec3 lightDir = normalize(light.position.xyz - fragPos);
             float distance = length(light.position.xyz - fragPos);
             vec3 spotLightDir = normalize(light.rotation.xyz);
-            float theta = dot(lightDir, normalize(-spotLightDir));
+            float theta = dot(lightDir, -spotLightDir);
+
+            float epsilon = cos(light.fov) * (1.0 - light.blend) + light.blend;
+            float intensity = smoothstep(epsilon, 1.0, theta);
+
+            float attenuation = max(0.0, 1.0 - pow((distance - light.radius) / light.limit, 4.0));
+            float NdotL = max(dot(normal, lightDir), 0.0);
+            diffuse += NdotL * light.tint.rgb * light.power * attenuation * intensity;
+
+            vec3 h = normalize(viewDir + lightDir);
+
+           vec3 F0 = mix(vec3(0.04), albedo.rgb, metalness);
+           vec3 F = fresnelSchlick(max(dot(h, viewDir), 0.0), F0);
+
+           float adjustedRoughness = max(roughness, 0.05);
+
+           float D = distributionGGX(normal, h, adjustedRoughness);    
+           float G = geometrySmith(normal, viewDir, lightDir, adjustedRoughness);  
+
+           vec3 nominator = D * F * G;
+           float denominator = 4.0 * max(dot(normal, viewDir), 0.0) * max(dot(normal, lightDir), 0.0);
+           specular += nominator / max(denominator, 0.001) * light.tint.rgb * light.power * attenuation * intensity; 
+
+           vec3 kS = F;
+           vec3 kD = vec3(1.0) - kS;
+           kD *= 1.0 - metalness;
+
+           diffuse *= (albedo / 3.14159265) * kD;
         }
      }
 

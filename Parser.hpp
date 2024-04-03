@@ -37,13 +37,13 @@ struct Light {
 	int lightType = -1;
 	int shadow = 0.0;
 
-	float angle = -1.0;
-	float strength = -1.0;
-	float radius = -1.0;
-	float power = -1.0;
-	float fov = -1.0;
-	float blend = -1.0;
-	float limit = -1.0;
+	float angle = 0.0;
+	float strength = 0.0;
+	float radius = 0.0;
+	float power = 0.0;
+	float fov = 0.0;
+	float blend = 0.0;
+	float limit = 0.0;
 };
 
 struct Mirror {};

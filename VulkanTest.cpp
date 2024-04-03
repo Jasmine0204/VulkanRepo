@@ -64,7 +64,9 @@
 // A3 Reference list (more detailed citations are commented together with code blocks that are inspired by corresponding reference, search "Citation" to check exact locations)
 // https://www.opengl-tutorial.org/intermediate-tutorials/tutorial-16-shadow-mapping/ A very detailed tutorial that go through each step of creating shadow map in OpenGL.
 // https://vkguide.dev/docs/chapter-4/storage_buffers/ An instruction of using storage buffer in Vulkan
-// https://raytracing.github.io/books/RayTracingInOneWeekend.html#addingasphere/ray-sphereintersection For sphere light root solution(cited in fragment shader)
+// https://raytracing.github.io/books/RayTracingInOneWeekend.html#addingasphere/ray-sphereintersection For sphere light root solution (cited in fragment shader)
+// https://learnopengl.com/Lighting/Light-casters A detailed documentation about different light types and their implementation (cited in fragment shader)
+// A3-Create model & license: "Rusted Japanese Torii Gates" (https://skfb.ly/o8JtD) by Sousinho is licensed under Creative Commons Attribution (http://creativecommons.org/licenses/by/4.0/).
 
 uint32_t WIDTH = 1280;
 uint32_t HEIGHT = 720;
@@ -74,18 +76,18 @@ std::string eventFilePath = "./model/events.txt";
 bool headless = false;
 bool lambertian = false;
 std::string inputFile = "./model/ox_bridge_morning.png";
-std::string outputFile = "./model/sky_diffuse.png";
+std::string outputFile = "./model/ox_bridge_morning.lambertian.png";
 
 
 // store all supportive command line options
 struct CommandLineOptions {
 	bool headless = false;
 	std::string drawingSize;
-	std::string sceneFile = "./model/A2-Create.s72";
+	std::string sceneFile = "./model/A3-Create.s72";
 	std::string eventFile = "./model/events.txt";
 	bool lambertian = false;
 	std::string inputFile = "./model/ox_bridge_morning.png";
-	std::string outputFile = "./model/sky_diffuse.png";
+	std::string outputFile = "./model/ox_bridge_morning.lambertian.png";
 };
 
 
@@ -428,6 +430,7 @@ private:
 	VkPipelineLayout pipelineLayout;
 	VkRenderPass swapChainRenderPass;
 	VkRenderPass offscreenRenderPass;
+	VkRenderPass shadowRenderPass;
 	VkPipeline graphicsPipeline;
 	VkPipeline simpleGraphicsPipeline;
 
@@ -458,6 +461,12 @@ private:
 	VkImage depthImage;
 	VkDeviceMemory depthImageMemory;
 	VkImageView depthImageView;
+
+	// shadow map depth resources
+	VkImage shadowDepthImage;
+	VkDeviceMemory shadowDepthImageMemory;
+	VkImageView shadowDepthImageView;
+	VkFramebuffer shadowFramebuffer;
 
 	// user camera
 	UserCamera userCamera;
@@ -670,6 +679,9 @@ private:
 		createDepthResources(swapChainExtent);
 
 		createFramebuffers();
+
+		createShadowResource(lights[0]);
+		createShadowFramebuffer(shadowDepthImageView, lights[0], shadowFramebuffer);
 
 		createVertexBuffersForAllMeshes(sceneGraph.meshes);
 
@@ -1119,6 +1131,59 @@ private:
 
 		endSingleTimeCommands(commandBuffer);
 
+	}
+
+	void createShadowResource(Light& light) {
+		VkFormat depthFormat = findDepthFormat();
+		createImage(light.shadow, light.shadow, depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, shadowDepthImage, shadowDepthImageMemory);
+		shadowDepthImageView = createImageView(shadowDepthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+		
+		VkAttachmentDescription depthAttachment = {};
+		depthAttachment.format = depthFormat;
+		depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+		depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+		VkAttachmentReference depthAttachmentRef = {};
+		depthAttachmentRef.attachment = 0;
+		depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+		VkSubpassDescription subpass = {};
+		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		subpass.colorAttachmentCount = 0;
+		subpass.pDepthStencilAttachment = &depthAttachmentRef;
+
+		VkRenderPassCreateInfo renderPassInfo = {};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+		renderPassInfo.attachmentCount = 1;
+		renderPassInfo.pAttachments = &depthAttachment;
+		renderPassInfo.subpassCount = 1;
+		renderPassInfo.pSubpasses = &subpass;
+
+		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &shadowRenderPass) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create shadow render pass!");
+		}
+	}
+
+	void createShadowFramebuffer(VkImageView shadowImageView, Light& light, VkFramebuffer& shadowFramebuffer) {
+		VkImageView attachments[] = { shadowImageView };
+
+		VkFramebufferCreateInfo framebufferInfo = {};
+		framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+		framebufferInfo.renderPass = shadowRenderPass;
+		framebufferInfo.attachmentCount = 1;
+		framebufferInfo.pAttachments = attachments;
+		framebufferInfo.width = light.shadow;
+		framebufferInfo.height = light.shadow;
+		framebufferInfo.layers = 1;
+
+		if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &shadowFramebuffer) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create framebuffer!");
+		}
 	}
 
 	void createDepthResources(VkExtent2D& extent) {
@@ -3124,6 +3189,11 @@ private:
 
 		cleanupSwapChain();
 
+		vkDestroyImageView(device, shadowDepthImageView, nullptr);
+		vkDestroyImage(device, shadowDepthImage, nullptr);
+		vkFreeMemory(device, shadowDepthImageMemory, nullptr);
+		vkDestroyFramebuffer(device, shadowFramebuffer, nullptr);
+
 		vkDestroySampler(device, textureSampler, nullptr);
 
 		cleanupAllTextures(materials);
@@ -3175,6 +3245,7 @@ private:
 		vkDestroyPipeline(device, simpleGraphicsPipeline, nullptr);
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		vkDestroyRenderPass(device, swapChainRenderPass, nullptr);
+		vkDestroyRenderPass(device, shadowRenderPass, nullptr);
 
 		vkDestroyDevice(device, nullptr);
 		vkDestroySurfaceKHR(instance, surface, nullptr);
