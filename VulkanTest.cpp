@@ -66,7 +66,9 @@
 // https://vkguide.dev/docs/chapter-4/storage_buffers/ An instruction of using storage buffer in Vulkan
 // https://raytracing.github.io/books/RayTracingInOneWeekend.html#addingasphere/ray-sphereintersection For sphere light root solution (cited in fragment shader)
 // https://learnopengl.com/Lighting/Light-casters A detailed documentation about different light types and their implementation (cited in fragment shader)
-// A3-Create model & license: "Rusted Japanese Torii Gates" (https://skfb.ly/o8JtD) by Sousinho is licensed under Creative Commons Attribution (http://creativecommons.org/licenses/by/4.0/).
+// https://www.zhihu.com/tardis/zm/art/78987582?source_id=1003 A Chinese blog introduces converting quaternion to vectors 
+// A3-Create model: "Rusted Japanese Torii Gates" (https://skfb.ly/o8JtD) by Sousinho is licensed under Creative Commons Attribution 4.0 (http://creativecommons.org/licenses/by/4.0/).
+// A3-Create texture: https://polyhaven.com/a/brown_mud_leaves_01 by Rob Tuytel is licensed under CC0 https://creativecommons.org/publicdomain/zero/1.0/
 
 uint32_t WIDTH = 1280;
 uint32_t HEIGHT = 720;
@@ -467,6 +469,7 @@ private:
 	VkDeviceMemory shadowDepthImageMemory;
 	VkImageView shadowDepthImageView;
 	VkFramebuffer shadowFramebuffer;
+	VkExtent2D shadowExtent = { 256, 256 };
 
 	// user camera
 	UserCamera userCamera;
@@ -1869,13 +1872,31 @@ private:
 		if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
 			throw std::runtime_error("failed to begin recording command buffer!");
 		}
+
+		VkRenderPassBeginInfo shadowRenderPassInfo{};
+		shadowRenderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+		shadowRenderPassInfo.renderPass = shadowRenderPass;
+		shadowRenderPassInfo.framebuffer = shadowFramebuffer;
+		shadowRenderPassInfo.renderArea.offset = { 0, 0 };
+		shadowRenderPassInfo.renderArea.extent = shadowExtent;
+
+		VkClearValue clearValue = {};
+		clearValue.depthStencil = { 1.0f, 0 };
+		shadowRenderPassInfo.clearValueCount = 1;
+		shadowRenderPassInfo.pClearValues = &clearValue;
+
+		vkCmdBeginRenderPass(commandBuffer, &shadowRenderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline);
+
+		
 		VkRenderPassBeginInfo renderPassInfo{};
 		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 		renderPassInfo.renderPass = renderPass;
 		renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];
 		renderPassInfo.renderArea.offset = { 0, 0 };
 		renderPassInfo.renderArea.extent = swapChainExtent;
-
+		
 		std::array<VkClearValue, 2> clearValues{};
 		clearValues[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
 		// The range of depths in the depth buffer is 0.0 to 1.0 in Vulkan
@@ -1886,8 +1907,6 @@ private:
 		renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
 		renderPassInfo.pClearValues = clearValues.data();
 		vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-
 
 		//  can only have a single index buffer
 		//vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
@@ -2136,6 +2155,7 @@ private:
 
 	}
 
+	// Citation: convert quaternion to vectors https://www.zhihu.com/tardis/zm/art/78987582?source_id=1003
 	glm::vec3 quatToVec(glm::quat q) {
 		glm::vec3 v = glm::vec3(0,0,-1);
 		glm::vec3 u = glm::vec3(q.x, q.y, q.z);
