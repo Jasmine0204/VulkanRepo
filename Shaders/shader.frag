@@ -11,6 +11,7 @@ layout(location = 0) out vec4 outColor;
 layout(binding = 0) uniform UniformBufferObject {
     mat4 view;
     mat4 proj;
+    mat4 lightSpace;
     vec4 cameraPos;
 } ubo;
 
@@ -42,8 +43,10 @@ struct Light{
 };
 
 layout(binding = 5) buffer lightBuffer {
-	Light lights[];
+	Light lights[10];
 } lightData;
+
+layout(binding = 6) uniform sampler2DShadow shadowMap;
 
 layout(push_constant) uniform PushConstants {
     mat4 model;
@@ -53,6 +56,17 @@ layout(push_constant) uniform PushConstants {
 	int materialType;
     int lightCount;
 } pushConstants;
+
+
+float calculateShadow(vec4 fragPosLightSpace){
+    // Citation: shadow related part of code is inspired by https://www.opengl-tutorial.org/intermediate-tutorials/tutorial-16-shadow-mapping/#setting-up-the-rendertarget-and-the-mvp-matrix
+    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    projCoords = projCoords * 0.5 + 0.5;
+
+    float shadow = texture(shadowMap, projCoords);
+
+    return shadow;
+}
 
 vec3 toneMappingFilmic(vec3 color) {
     color = max(vec3(0.0), color - vec3(0.004));
@@ -141,6 +155,8 @@ vec3 computeRepresentativePoint(vec3 lightPos, float lightRadius, vec3 fragPos, 
 void main() {
     vec3 albedo;
     vec3 envColor;
+    vec4 fragPosLightSpace = ubo.lightSpace * vec4(fragPos, 1.0);
+    float shadow = calculateShadow(fragPosLightSpace);
 
     if(pushConstants.albedoColor.x < 0){
        albedo = texture(texSampler, fragTexCoord).rgb; 
@@ -204,7 +220,7 @@ void main() {
             diffuse += NdotL * light.tint.rgb * light.power * attenuation * intensity;
         }
        }
-
+      diffuse *= shadow;
       outColor = vec4((ambient + diffuse) * albedo, 1.0);
 
     } 
@@ -240,6 +256,7 @@ void main() {
 
        vec3 diffuse = vec3(0.0);
        vec3 specular = vec3(0.0);
+       vec3 kD;
 
        for(int i = 0; i < pushConstants.lightCount; i++) {
         Light light = lightData.lights[i];
@@ -269,10 +286,8 @@ void main() {
            specular += nominator / max(denominator, 0.001); 
 
            vec3 kS = F;
-           vec3 kD = vec3(1.0) - kS;
+           kD = vec3(1.0) - kS;
            kD *= 1.0 - metalness;
-
-           diffuse *= (albedo / 3.14159265) * kD;
         } 
         // sphere light
         else if (light.lightType == 1){
@@ -305,10 +320,9 @@ void main() {
            specular += nominator / max(denominator, 0.001) * light.tint.rgb * light.power * attenuation; 
 
            vec3 kS = F;
-           vec3 kD = vec3(1.0) - kS;
+           kD = vec3(1.0) - kS;
            kD *= 1.0 - metalness;
-
-           diffuse *= (albedo / 3.14159265) * kD;
+    
            }
         // spot light
         else if (light.lightType == 2){
@@ -339,14 +353,12 @@ void main() {
            specular += nominator / max(denominator, 0.001) * light.tint.rgb * light.power * attenuation * intensity; 
 
            vec3 kS = F;
-           vec3 kD = vec3(1.0) - kS;
+           kD = vec3(1.0) - kS;
            kD *= 1.0 - metalness;
-
-           diffuse *= (albedo / 3.14159265) * kD;
         }
      }
 
-
+       diffuse *= (albedo / 3.14159265) * kD;
        vec3 reflectDir = reflect(viewDir, normal);
        vec3 mirrorColor = texture(envMap, -reflectDir).rgb;
 
@@ -356,6 +368,10 @@ void main() {
 
        vec3 ambient = toneMappingFilmic(mixedEnvColor); 
        ambient = adjustSaturation(ambient, 1.2);
+
+       
+       diffuse *= shadow;
+       //specular *= shadow;
 
        outColor = vec4(diffuse + specular + ambient * albedo, 1.0);
     }

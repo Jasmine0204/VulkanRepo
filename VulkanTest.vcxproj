@@ -168,6 +168,8 @@
   <ItemGroup>
     <None Include="shaders\shader.frag" />
     <None Include="shaders\shader.vert" />
+    <None Include="shaders\shadowshader.frag" />
+    <None Include="shaders\shadowshader.vert" />
     <None Include="shaders\simpleshader.frag" />
     <None Include="shaders\simpleshader.vert" />
   </ItemGroup>

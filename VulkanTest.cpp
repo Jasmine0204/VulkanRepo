@@ -85,7 +85,7 @@ std::string outputFile = "./model/ox_bridge_morning.lambertian.png";
 struct CommandLineOptions {
 	bool headless = false;
 	std::string drawingSize;
-	std::string sceneFile = "./model/A3-Create.s72";
+	std::string sceneFile = "./model/A2-Create.s72";
 	std::string eventFile = "./model/events.txt";
 	bool lambertian = false;
 	std::string inputFile = "./model/ox_bridge_morning.png";
@@ -245,6 +245,7 @@ const bool enableValidationLayers = true;
 struct UniformBufferObject {
 	glm::mat4 view;
 	glm::mat4 projection;
+	glm::mat4 lightSpace;;
 	glm::vec4 cameraPos;
 };
 
@@ -435,6 +436,7 @@ private:
 	VkRenderPass shadowRenderPass;
 	VkPipeline graphicsPipeline;
 	VkPipeline simpleGraphicsPipeline;
+	VkPipeline shadowPipeline;
 
 	// descriptors
 	VkDescriptorPool descriptorPool;
@@ -469,7 +471,7 @@ private:
 	VkDeviceMemory shadowDepthImageMemory;
 	VkImageView shadowDepthImageView;
 	VkFramebuffer shadowFramebuffer;
-	VkExtent2D shadowExtent = { 256, 256 };
+	VkExtent2D shadowExtent = { static_cast<uint32_t>(lights[0].shadow), static_cast<uint32_t>(lights[0].shadow) };
 
 	// user camera
 	UserCamera userCamera;
@@ -647,6 +649,7 @@ private:
 		createImageViews();
 
 		createRenderPass(swapChainImageFormat, swapChainRenderPass);
+		createShadowRenderpass(shadowExtent, shadowRenderPass);
 		createDescriptorSetLayout();
 		auto bind = Vertex::getBindingDescription();
 		auto attr = Vertex::getAttributeDescriptions();
@@ -654,7 +657,9 @@ private:
 		auto simpleAttr = SimpleVertex::getAttributeDescriptions();
 		createPipelineLayout();
 		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, graphicsPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()), "shaders/vert.spv", "shaders/frag.spv");
+		createShadowPipeline(shadowExtent, shadowRenderPass, shadowPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()), "shaders/shadowvert.spv", "shaders/shadowfrag.spv");
 		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, simpleGraphicsPipeline, simpleBind, std::vector<VkVertexInputAttributeDescription>(simpleAttr.begin(), simpleAttr.end()), "shaders/simpleVert.spv", "shaders/simpleFrag.spv");
+
 
 		createCommandPool();
 
@@ -683,13 +688,13 @@ private:
 
 		createFramebuffers();
 
-		createShadowResource(lights[0]);
-		createShadowFramebuffer(shadowDepthImageView, lights[0], shadowFramebuffer);
+
+		createShadowFramebuffer(shadowDepthImageView, shadowExtent, shadowFramebuffer);
 
 		createVertexBuffersForAllMeshes(sceneGraph.meshes);
 
 		createLightBuffer();
-		
+
 		//createIndexBuffer();
 
 
@@ -967,8 +972,8 @@ private:
 		samplerInfo.unnormalizedCoordinates = VK_FALSE;
 
 		// used in shadow maps
-		samplerInfo.compareEnable = VK_FALSE;
-		samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+		samplerInfo.compareEnable = VK_TRUE;
+		samplerInfo.compareOp = VK_COMPARE_OP_LESS;
 
 		samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
 		samplerInfo.mipLodBias = 0.0f;
@@ -1118,6 +1123,14 @@ private:
 			sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 			destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+			barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+			barrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+			sourceStage = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+			destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		}
 		else {
 			throw std::invalid_argument("unsupported layout transition!");
 		}
@@ -1136,11 +1149,11 @@ private:
 
 	}
 
-	void createShadowResource(Light& light) {
+	void createShadowRenderpass(VkExtent2D& extent, VkRenderPass& renderPass) {
 		VkFormat depthFormat = findDepthFormat();
-		createImage(light.shadow, light.shadow, depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, shadowDepthImage, shadowDepthImageMemory);
+		createImage(extent.width, extent.height, depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, shadowDepthImage, shadowDepthImageMemory);
 		shadowDepthImageView = createImageView(shadowDepthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
-		
+
 		VkAttachmentDescription depthAttachment = {};
 		depthAttachment.format = depthFormat;
 		depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -1149,7 +1162,7 @@ private:
 		depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 		depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 		depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-		depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+		depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
 		VkAttachmentReference depthAttachmentRef = {};
 		depthAttachmentRef.attachment = 0;
@@ -1167,12 +1180,12 @@ private:
 		renderPassInfo.subpassCount = 1;
 		renderPassInfo.pSubpasses = &subpass;
 
-		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &shadowRenderPass) != VK_SUCCESS) {
+		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create shadow render pass!");
 		}
 	}
 
-	void createShadowFramebuffer(VkImageView shadowImageView, Light& light, VkFramebuffer& shadowFramebuffer) {
+	void createShadowFramebuffer(VkImageView shadowImageView, VkExtent2D& extent, VkFramebuffer& shadowFramebuffer) {
 		VkImageView attachments[] = { shadowImageView };
 
 		VkFramebufferCreateInfo framebufferInfo = {};
@@ -1180,8 +1193,8 @@ private:
 		framebufferInfo.renderPass = shadowRenderPass;
 		framebufferInfo.attachmentCount = 1;
 		framebufferInfo.pAttachments = attachments;
-		framebufferInfo.width = light.shadow;
-		framebufferInfo.height = light.shadow;
+		framebufferInfo.width = extent.width;
+		framebufferInfo.height = extent.height;
 		framebufferInfo.layers = 1;
 
 		if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &shadowFramebuffer) != VK_SUCCESS) {
@@ -1343,7 +1356,12 @@ private:
 				lightBufferInfo.offset = 0;
 				lightBufferInfo.range = sizeof(Light) * lights.size();
 
-				std::array<VkWriteDescriptorSet, 6> descriptorWrites{};
+				VkDescriptorImageInfo shadowmapImageInfo{};
+				shadowmapImageInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+				shadowmapImageInfo.imageView = shadowDepthImageView;
+				shadowmapImageInfo.sampler = textureSampler;
+
+				std::array<VkWriteDescriptorSet, 7> descriptorWrites{};
 
 				descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 				descriptorWrites[0].dstSet = descriptorSet;
@@ -1446,6 +1464,14 @@ private:
 				descriptorWrites[5].descriptorCount = 1;
 				descriptorWrites[5].pBufferInfo = &lightBufferInfo;
 
+				descriptorWrites[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+				descriptorWrites[6].dstSet = descriptorSets[descriptorIndex];
+				descriptorWrites[6].dstBinding = 6;
+				descriptorWrites[6].dstArrayElement = 0;
+				descriptorWrites[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+				descriptorWrites[6].descriptorCount = 1;
+				descriptorWrites[6].pImageInfo = &shadowmapImageInfo;
+
 				vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 			}
 		}
@@ -1454,7 +1480,7 @@ private:
 	void createDescriptorPool() {
 		//  allocate one of these descriptors for every frame
 		size_t totalMaterials = materials.size();
-		std::array<VkDescriptorPoolSize, 6> poolSizes{};
+		std::array<VkDescriptorPoolSize, 7> poolSizes{};
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
 
@@ -1473,12 +1499,15 @@ private:
 		poolSizes[5].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 		poolSizes[5].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
 
+		poolSizes[6].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		poolSizes[6].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
+
 
 		VkDescriptorPoolCreateInfo poolInfo{};
 		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 		poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
 		poolInfo.pPoolSizes = poolSizes.data();
-		poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * 6);
+		poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * 7);
 
 		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create descriptor pool!");
@@ -1556,8 +1585,15 @@ private:
 		lightLayoutBinding.pImmutableSamplers = nullptr;
 		lightLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+		// shadow map
+		VkDescriptorSetLayoutBinding shadowLayoutBinding{};
+		shadowLayoutBinding.binding = 6;
+		shadowLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		shadowLayoutBinding.descriptorCount = 1;
+		shadowLayoutBinding.pImmutableSamplers = nullptr;
+		shadowLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-		std::array<VkDescriptorSetLayoutBinding, 6> bindings = { uboLayoutBinding, samplerLayoutBinding, normalmapLayoutBinding, cubemapLayoutBinding, lambertianCubemapLayoutBinding, lightLayoutBinding };
+		std::array<VkDescriptorSetLayoutBinding, 7> bindings = { uboLayoutBinding, samplerLayoutBinding, normalmapLayoutBinding, cubemapLayoutBinding, lambertianCubemapLayoutBinding, lightLayoutBinding, shadowLayoutBinding };
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
 		layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -1873,6 +1909,8 @@ private:
 			throw std::runtime_error("failed to begin recording command buffer!");
 		}
 
+
+		// shadow map render pass
 		VkRenderPassBeginInfo shadowRenderPassInfo{};
 		shadowRenderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 		shadowRenderPassInfo.renderPass = shadowRenderPass;
@@ -1887,16 +1925,38 @@ private:
 
 		vkCmdBeginRenderPass(commandBuffer, &shadowRenderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline);
+		VkViewport shadowViewport{};
+		shadowViewport.x = 0.0f;
+		shadowViewport.y = 0.0f;
+		shadowViewport.width = static_cast<float>(shadowExtent.width);
+		shadowViewport.height = static_cast<float>(shadowExtent.height);
+		shadowViewport.minDepth = 0.0f;
+		shadowViewport.maxDepth = 1.0f;
+		vkCmdSetViewport(commandBuffer, 0, 1, &shadowViewport);
 
-		
+		VkRect2D shadowScissor{};
+		shadowScissor.offset = { 0, 0 };
+		shadowScissor.extent = shadowExtent;
+		vkCmdSetScissor(commandBuffer, 0, 1, &shadowScissor);
+
+		// render shadow map
+		for (int rootGlobalIndex : sceneGraph.parsedScene.roots) {
+			int containerIndex = sceneGraph.globalNodeIndexMap.at(rootGlobalIndex); // directly get rootGlobalIndex
+			const Node& rootNode = sceneGraph.nodes.at(containerIndex);
+			glm::mat4 parentMatrix = glm::mat4(1.0f);
+			renderShadowNode(rootNode, rootGlobalIndex, commandBuffer, currentFrame, parentMatrix);
+		}
+
+		vkCmdEndRenderPass(commandBuffer);
+
+
 		VkRenderPassBeginInfo renderPassInfo{};
 		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 		renderPassInfo.renderPass = renderPass;
 		renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];
 		renderPassInfo.renderArea.offset = { 0, 0 };
 		renderPassInfo.renderArea.extent = swapChainExtent;
-		
+
 		std::array<VkClearValue, 2> clearValues{};
 		clearValues[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
 		// The range of depths in the depth buffer is 0.0 to 1.0 in Vulkan
@@ -1908,8 +1968,6 @@ private:
 		renderPassInfo.pClearValues = clearValues.data();
 		vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-		//  can only have a single index buffer
-		//vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 		VkViewport viewport{};
 		viewport.x = 0.0f;
 		viewport.y = 0.0f;
@@ -2003,6 +2061,80 @@ private:
 
 		if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
 			throw std::runtime_error("failed to record command buffer!");
+		}
+	}
+
+	void renderShadowNode(const Node& node, const int& globalNodeIndex, VkCommandBuffer commandBuffer, int currentFrame, glm::mat4& parentMatrix) {
+		glm::mat4 modelMatrix = calculateModelMatrix(node);
+
+		int nodeIndex = sceneGraph.getNodeIndex(sceneGraph.nodes, node);
+
+		if (nodeHasAnimation(globalNodeIndex)) {
+			// get clip
+			std::vector<AnimationClip> matchedClips = getAnimationClipsForNode(globalNodeIndex);
+
+			// model matrix = scale * rotation * translation
+			if (!matchedClips.empty()) {
+				modelMatrix = calculateModelMatrix(node);
+
+				glm::mat4 animatedMatrix = calculateModelMatrixForNodeAtTime(matchedClips, animTime, modelMatrix, nodes[nodeIndex]);
+				modelMatrix = animatedMatrix;
+			}
+		}
+		else {
+			modelMatrix = calculateModelMatrix(node);
+		}
+
+		modelMatrix = parentMatrix * modelMatrix;
+
+		// calculate materialIndex
+		int materialIndex = 0;
+		if (node.mesh >= 0) {
+			int meshContainerIndex = sceneGraph.meshIndexMap.at(node.mesh);
+			const Mesh& mesh = sceneGraph.meshes.at(meshContainerIndex);
+
+			Attribute attr = mesh.getAttribute("POSITION");
+			int stride = attr.stride;
+
+			if (stride == 52) {
+				materialIndex = sceneGraph.materialIndexMap.at(mesh.material);
+			}
+		}
+
+		// calculate descriptor set index 
+		int descriptorSetIndex = currentFrame * materials.size() + materialIndex;
+
+		// bind descriptor
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[descriptorSetIndex], 0, nullptr);
+
+		if (node.light >= 0) {
+			int containerIndex = sceneGraph.lightIndexMap[node.light];
+			lights[containerIndex].position = glm::vec4(node.translation, 0.0);
+			lights[containerIndex].rotation = glm::vec4(quatToVec(node.rotation), 0.0);
+			updateLightBuffer(lights);
+		}
+
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline);
+
+		pushConstants.model = modelMatrix;
+		vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants), &pushConstants);
+		updateUniformBuffer(currentFrame, nodeIndex);
+
+		if (node.mesh >= 0) {
+
+
+			const Mesh& mesh = sceneGraph.meshes.at(sceneGraph.meshIndexMap.at(node.mesh));
+			VkBuffer vertexBuffers[] = { mesh.vertexBuffer };
+			VkDeviceSize offsets[] = { 0 };
+			vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+
+			vkCmdDraw(commandBuffer, static_cast<uint32_t>(mesh.count), 1, 0, 0);
+		}
+
+		for (int childIndex : node.children) {
+			int containerIndex = sceneGraph.globalNodeIndexMap.at(childIndex);
+			const Node& childNode = sceneGraph.nodes.at(containerIndex);
+			renderShadowNode(childNode, childIndex, commandBuffer, currentFrame, modelMatrix);
 		}
 	}
 
@@ -2107,13 +2239,17 @@ private:
 		vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants), &pushConstants);
 		updateUniformBuffer(currentFrame, nodeIndex);
 
+
 		if (node.mesh >= 0) {
 
 			try {
+
 				if (materialType == 0) { vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, simpleGraphicsPipeline); }
 				else {
 					vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-				};
+
+				}
+
 
 				int containerIndex = sceneGraph.meshIndexMap.at(node.mesh);
 				const Mesh& mesh = sceneGraph.meshes.at(containerIndex);
@@ -2121,6 +2257,7 @@ private:
 				VkBuffer buffers[] = { mesh.vertexBuffer };
 				VkDeviceSize offsets[] = { 0 };
 				vkCmdBindVertexBuffers(commandBuffer, 0, 1, buffers, offsets);
+
 
 				vkCmdDraw(commandBuffer, static_cast<uint32_t>(mesh.count), 1, 0, 0);
 
@@ -2140,24 +2277,26 @@ private:
 		if (node.light >= 0) {
 			int containerIndex = sceneGraph.lightIndexMap[node.light];
 			lights[containerIndex].position = glm::vec4(node.translation, 0.0);
-			lights[containerIndex].rotation = glm::vec4(quatToVec(node.rotation),0.0);
+			lights[containerIndex].rotation = glm::vec4(quatToVec(node.rotation), 0.0);
 			updateLightBuffer(lights);
 		}
+
 
 		// recursively render children nodes
 		if (!node.children.empty()) {
 			for (int childIndex : node.children) {
 				int containerIndex = sceneGraph.globalNodeIndexMap.at(childIndex);
 				const Node& childNode = sceneGraph.nodes.at(containerIndex); //
+
 				renderNode(childNode, childIndex, commandBuffer, currentFrame, modelMatrix);
+
 			}
 		}
-
 	}
 
 	// Citation: convert quaternion to vectors https://www.zhihu.com/tardis/zm/art/78987582?source_id=1003
 	glm::vec3 quatToVec(glm::quat q) {
-		glm::vec3 v = glm::vec3(0,0,-1);
+		glm::vec3 v = glm::vec3(0, 0, -1);
 		glm::vec3 u = glm::vec3(q.x, q.y, q.z);
 		float s = q.w;
 		return 2.0f * glm::dot(u, v) * u
@@ -2300,6 +2439,118 @@ private:
 		}
 	}
 
+	void createShadowPipeline(VkExtent2D& extent, VkRenderPass& renderPass, VkPipeline& shadowPipeline, VkVertexInputBindingDescription& vertexBindingDescriptions,
+		const std::vector<VkVertexInputAttributeDescription>& vertexAttributeDescriptions, std::string vertShader, std::string fragShader) {
+
+		auto vertShaderCode = readFile(vertShader);
+		auto fragShaderCode = readFile(fragShader);
+
+		auto bindingDescription = vertexBindingDescriptions;
+		auto attributeDescriptions = vertexAttributeDescriptions;
+
+		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+		VkPipelineShaderStageCreateInfo vertShaderStageInfo = {};
+		vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+		vertShaderStageInfo.module = vertShaderModule;
+		vertShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo fragShaderStageInfo = {};
+		fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+		fragShaderStageInfo.module = fragShaderModule;
+		fragShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+		vertexInputInfo.vertexBindingDescriptionCount = 1;
+		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+		vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+		vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+
+		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+		inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+		inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+		inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+		VkViewport viewport{};
+		viewport.x = 0.0f;
+		viewport.y = 0.0f;
+		viewport.width = (float)extent.width;
+		viewport.height = (float)extent.height;
+		viewport.minDepth = 0.0f;
+		viewport.maxDepth = 1.0f;
+
+		VkRect2D scissor{};
+		scissor.offset = { 0, 0 };
+		scissor.extent = extent;
+
+		VkPipelineViewportStateCreateInfo viewportState{};
+		viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+		viewportState.viewportCount = 1;
+		viewportState.pViewports = &viewport;
+		viewportState.scissorCount = 1;
+		viewportState.pScissors = &scissor;
+
+		VkPipelineRasterizationStateCreateInfo rasterizer{};
+		rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+		rasterizer.depthClampEnable = VK_FALSE;
+		rasterizer.rasterizerDiscardEnable = VK_FALSE;
+		rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+		rasterizer.lineWidth = 1.0f;
+		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT; // backside will be culled
+		rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; // y is flipped so vertices are drawn counter clockwisely
+		rasterizer.depthBiasEnable = VK_FALSE;
+
+		VkPipelineMultisampleStateCreateInfo multisampling{};
+		multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+		multisampling.sampleShadingEnable = VK_FALSE;
+		multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+		VkPipelineDepthStencilStateCreateInfo depthStencil{};
+		depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+		depthStencil.depthTestEnable = VK_TRUE;
+		depthStencil.depthWriteEnable = VK_TRUE;
+		depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+		depthStencil.depthBoundsTestEnable = VK_FALSE;
+		depthStencil.stencilTestEnable = VK_FALSE;
+
+		std::vector<VkDynamicState> dynamicStates = {
+			VK_DYNAMIC_STATE_VIEWPORT,
+			VK_DYNAMIC_STATE_SCISSOR
+		};
+		VkPipelineDynamicStateCreateInfo dynamicState{};
+		dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+		dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+		dynamicState.pDynamicStates = dynamicStates.data();
+
+		VkGraphicsPipelineCreateInfo pipelineInfo{};
+		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		pipelineInfo.stageCount = 2;
+		pipelineInfo.pStages = shaderStages;
+		pipelineInfo.pVertexInputState = &vertexInputInfo;
+		pipelineInfo.pInputAssemblyState = &inputAssembly;
+		pipelineInfo.pViewportState = &viewportState;
+		pipelineInfo.pRasterizationState = &rasterizer;
+		pipelineInfo.pMultisampleState = &multisampling;
+		pipelineInfo.pDepthStencilState = &depthStencil;
+
+		pipelineInfo.layout = pipelineLayout;
+		pipelineInfo.renderPass = shadowRenderPass;
+		pipelineInfo.subpass = 0;
+
+		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &shadowPipeline) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create graphics pipeline!");
+		}
+
+		vkDestroyShaderModule(device, vertShaderModule, nullptr);
+		vkDestroyShaderModule(device, fragShaderModule, nullptr);
+	}
+
 	void createGraphicsPipeline(VkExtent2D& extent, VkRenderPass& renderPass, VkPipeline& graphicsPipeline,
 		VkVertexInputBindingDescription& vertexBindingDescriptions,
 		const std::vector<VkVertexInputAttributeDescription>& vertexAttributeDescriptions,
@@ -2435,7 +2686,7 @@ private:
 		VkPushConstantRange pushConstantRange{};
 		pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;;
 		pushConstantRange.offset = 0;
-		pushConstantRange.size = 108;
+		pushConstantRange.size = 128;
 
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -2791,7 +3042,9 @@ private:
 			lastTime = currentTime;
 			userCamera.ProcessKeyboard(window, deltaTime);
 
+
 			debugCamera.setCameraTransform(debugCameraPosition, debugCameraYaw, debugCameraPitch);
+
 
 			renderCamera.setCameraTransform(renderCameraPosition, renderCameraYaw, renderCameraPitch);
 
@@ -3115,7 +3368,21 @@ private:
 
 		UniformBufferObject ubo{};
 
+		glm::vec3 lightPos = glm::vec3(1.0f, 1.0f, 3.0f);
+		glm::vec3 lightDir = glm::vec3(0.0f, 0.0f, 1.0f);
+		//std::cout << lightDir.z << "\n";
+		glm::vec3 upVector = glm::vec3(0.0f, 0.0f, 1.0f);
+
+		float near_plane = 0.01f, far_plane = 100.0f;
+		glm::mat4 lightProjection = glm::perspective(glm::radians(45.0f), (float)shadowExtent.width / (float)shadowExtent.height, near_plane, far_plane);
+		glm::mat4 lightView = glm::lookAt(lightPos, lightPos + lightDir, upVector);
+		glm::mat4 lightSpaceMatrix = lightProjection * lightView;
+
+		lightSpaceMatrix = debugCamera.GetProjectionMatrix() * debugCamera.GetViewMatrix();
+		ubo.lightSpace = lightSpaceMatrix;
+
 		if (isDebugCameraActive) {
+
 			ubo.view = debugCamera.GetViewMatrix();
 			ubo.projection = debugCamera.GetProjectionMatrix();
 			ubo.cameraPos = glm::vec4(debugCamera.Position, 0);
@@ -3139,6 +3406,7 @@ private:
 		}
 
 		ubo.projection[1][1] *= -1;
+
 
 		// GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted;
 
@@ -3263,6 +3531,7 @@ private:
 
 		vkDestroyPipeline(device, graphicsPipeline, nullptr);
 		vkDestroyPipeline(device, simpleGraphicsPipeline, nullptr);
+		vkDestroyPipeline(device, shadowPipeline, nullptr);
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		vkDestroyRenderPass(device, swapChainRenderPass, nullptr);
 		vkDestroyRenderPass(device, shadowRenderPass, nullptr);
