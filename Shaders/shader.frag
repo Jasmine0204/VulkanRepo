@@ -46,7 +46,7 @@ layout(binding = 5) buffer lightBuffer {
 	Light lights[10];
 } lightData;
 
-layout(binding = 6) uniform sampler2DShadow shadowMap;
+layout(binding = 6) uniform sampler2D shadowMap;
 
 layout(push_constant) uniform PushConstants {
     mat4 model;
@@ -63,7 +63,16 @@ float calculateShadow(vec4 fragPosLightSpace){
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     projCoords = projCoords * 0.5 + 0.5;
 
-    float shadow = texture(shadowMap, projCoords);
+    // PCF
+    float shadow = 0.0;
+    float texelSize = 1.0 / textureSize(shadowMap, 0).x;
+    for(int x = -1; x <= 1; ++x) {
+        for(int y = -1; y <= 1; ++y) {
+            float pcfDepth = texture(shadowMap, projCoords.xy + vec2(x, y) * texelSize).r; 
+            shadow += projCoords.z > pcfDepth ? 1.0 : 0.0;
+        }
+    }
+    shadow /= 9.0;
 
     return shadow;
 }
@@ -220,7 +229,7 @@ void main() {
             diffuse += NdotL * light.tint.rgb * light.power * attenuation * intensity;
         }
        }
-      diffuse *= shadow;
+      diffuse *= (1.0f - shadow);
       outColor = vec4((ambient + diffuse) * albedo, 1.0);
 
     } 
@@ -370,8 +379,8 @@ void main() {
        ambient = adjustSaturation(ambient, 1.2);
 
        
-       diffuse *= shadow;
-       //specular *= shadow;
+       diffuse *= (1.0f - shadow);
+       specular *= (1.0f - shadow);
 
        outColor = vec4(diffuse + specular + ambient * albedo, 1.0);
     }

@@ -85,7 +85,7 @@ std::string outputFile = "./model/ox_bridge_morning.lambertian.png";
 struct CommandLineOptions {
 	bool headless = false;
 	std::string drawingSize;
-	std::string sceneFile = "./model/A2-Create.s72";
+	std::string sceneFile = "./model/A3-Create.s72";
 	std::string eventFile = "./model/events.txt";
 	bool lambertian = false;
 	std::string inputFile = "./model/ox_bridge_morning.png";
@@ -482,9 +482,9 @@ private:
 
 	// debug camera settings
 	UserCamera debugCamera;
-	glm::vec3 debugCameraPosition = glm::vec3(3.0f, -1.0f, 5.0f);
-	float debugCameraYaw = 180;
-	float debugCameraPitch = -60.0;
+	glm::vec3 debugCameraPosition = glm::vec3(20.0f, 0.0f, 0.0f);
+	float debugCameraYaw = 190;
+	float debugCameraPitch = -5.0;
 
 	// render camera settings
 	UserCamera renderCamera;
@@ -1162,7 +1162,7 @@ private:
 		depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 		depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 		depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-		depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+		depthAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
 		VkAttachmentReference depthAttachmentRef = {};
 		depthAttachmentRef.attachment = 0;
@@ -1357,7 +1357,7 @@ private:
 				lightBufferInfo.range = sizeof(Light) * lights.size();
 
 				VkDescriptorImageInfo shadowmapImageInfo{};
-				shadowmapImageInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+				shadowmapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 				shadowmapImageInfo.imageView = shadowDepthImageView;
 				shadowmapImageInfo.sampler = textureSampler;
 
@@ -3368,9 +3368,8 @@ private:
 
 		UniformBufferObject ubo{};
 
-		glm::vec3 lightPos = glm::vec3(1.0f, 1.0f, 3.0f);
-		glm::vec3 lightDir = glm::vec3(0.0f, 0.0f, 1.0f);
-		//std::cout << lightDir.z << "\n";
+		glm::vec3 lightPos = lights[0].position;
+		glm::vec3 lightDir = lights[0].rotation;
 		glm::vec3 upVector = glm::vec3(0.0f, 0.0f, 1.0f);
 
 		float near_plane = 0.01f, far_plane = 100.0f;
@@ -3378,7 +3377,6 @@ private:
 		glm::mat4 lightView = glm::lookAt(lightPos, lightPos + lightDir, upVector);
 		glm::mat4 lightSpaceMatrix = lightProjection * lightView;
 
-		lightSpaceMatrix = debugCamera.GetProjectionMatrix() * debugCamera.GetViewMatrix();
 		ubo.lightSpace = lightSpaceMatrix;
 
 		if (isDebugCameraActive) {
