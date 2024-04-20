@@ -379,8 +379,8 @@ void main() {
        ambient = adjustSaturation(ambient, 1.2);
 
        
-       diffuse *= (1.0f - shadow);
-       specular *= (1.0f - shadow);
+       //diffuse *= (1.0f - shadow);
+       //specular *= (1.0f - shadow);
 
        outColor = vec4(diffuse + specular + ambient * albedo, 1.0);
     }

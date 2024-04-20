@@ -29,21 +29,21 @@
 // define structs
 
 struct Light {
-	glm::vec4 tint;
-	glm::vec4 position = glm::vec4(0.0);	
-	glm::vec4 rotation = glm::vec4(0.0);	
+	alignas(16) glm::vec4 tint;
+	alignas(16) glm::vec4 position = glm::vec4(0.0);
+	alignas(16) glm::vec4 rotation = glm::vec4(0.0);
 
 	// 0 Sun, 1 Sphere, 2 Spot
-	int lightType = -1;
-	int shadow = 0.0;
+	alignas(4) int lightType = -1;
+	alignas(4) int shadow = 0.0;
 
-	float angle = 0.0;
-	float strength = 0.0;
-	float radius = 0.0;
-	float power = 0.0;
-	float fov = 0.0;
-	float blend = 0.0;
-	float limit = 0.0;
+	alignas(4) float angle = 0.0;
+	alignas(4) float strength = 0.0;
+	alignas(4) float radius = 0.0;
+	alignas(4) float power = 0.0;
+	alignas(4) float fov = 0.0;
+	alignas(4) float blend = 0.0;
+	alignas(4) float limit = 0.0;
 };
 
 struct Mirror {};

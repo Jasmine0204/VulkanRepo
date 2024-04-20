@@ -85,7 +85,7 @@ std::string outputFile = "./model/ox_bridge_morning.lambertian.png";
 struct CommandLineOptions {
 	bool headless = false;
 	std::string drawingSize;
-	std::string sceneFile = "./model/A3-Create.s72";
+	std::string sceneFile = "./model/A2-Create.s72";
 	std::string eventFile = "./model/events.txt";
 	bool lambertian = false;
 	std::string inputFile = "./model/ox_bridge_morning.png";
@@ -245,9 +245,11 @@ const bool enableValidationLayers = true;
 struct UniformBufferObject {
 	glm::mat4 view;
 	glm::mat4 projection;
-	glm::mat4 lightSpace;;
+	glm::mat4 lightSpace;
+	glm::mat4 previousModel;
 	glm::vec4 cameraPos;
 };
+
 
 // store push constants struct
 struct PushConstants {
@@ -434,9 +436,11 @@ private:
 	VkRenderPass swapChainRenderPass;
 	VkRenderPass offscreenRenderPass;
 	VkRenderPass shadowRenderPass;
+	VkRenderPass motionRenderPass;
 	VkPipeline graphicsPipeline;
 	VkPipeline simpleGraphicsPipeline;
 	VkPipeline shadowPipeline;
+	VkPipeline motionPipeline;
 
 	// descriptors
 	VkDescriptorPool descriptorPool;
@@ -482,9 +486,9 @@ private:
 
 	// debug camera settings
 	UserCamera debugCamera;
-	glm::vec3 debugCameraPosition = glm::vec3(20.0f, 0.0f, 0.0f);
-	float debugCameraYaw = 190;
-	float debugCameraPitch = -5.0;
+	glm::vec3 debugCameraPosition = glm::vec3(0.0f, 0.0f, 6.0f);
+	float debugCameraYaw = 0;
+	float debugCameraPitch = -90;
 
 	// render camera settings
 	UserCamera renderCamera;
@@ -516,6 +520,7 @@ private:
 
 	// texture sampler
 	VkSampler textureSampler;
+	VkSampler shadowSampler;
 
 	// environment cubemap
 	Cubemap cubemap;
@@ -540,6 +545,12 @@ private:
 	// light data buffer
 	VkBuffer lightBuffer;
 	VkDeviceMemory lightBufferMemory;
+
+	// motion blur
+	VkImage motionImage;
+	VkDeviceMemory motionImageMemory;
+	VkImageView motionImageView;
+	VkFramebuffer motionFramebuffer;
 
 	void initWindow() {
 		glfwInit();
@@ -647,23 +658,34 @@ private:
 
 		createSwapChain();
 		createImageViews();
-
 		createRenderPass(swapChainImageFormat, swapChainRenderPass);
+
+		createImage(swapChainExtent.width, swapChainExtent.height, VK_FORMAT_B8G8R8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, motionImage, motionImageMemory);
+		motionImageView = createImageView(motionImage, VK_FORMAT_B8G8R8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
+		createRenderPass(swapChainImageFormat, motionRenderPass);
+
 		createShadowRenderpass(shadowExtent, shadowRenderPass);
+
 		createDescriptorSetLayout();
 		auto bind = Vertex::getBindingDescription();
 		auto attr = Vertex::getAttributeDescriptions();
 		auto simpleBind = SimpleVertex::getBindingDescription();
 		auto simpleAttr = SimpleVertex::getAttributeDescriptions();
 		createPipelineLayout();
+
 		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, graphicsPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()), "shaders/vert.spv", "shaders/frag.spv");
+		
+		createGraphicsPipeline(swapChainExtent, motionRenderPass, motionPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()), "shaders/motionvert.spv", "shaders/motionfrag.spv");
+		
 		createShadowPipeline(shadowExtent, shadowRenderPass, shadowPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()), "shaders/shadowvert.spv", "shaders/shadowfrag.spv");
+		
 		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, simpleGraphicsPipeline, simpleBind, std::vector<VkVertexInputAttributeDescription>(simpleAttr.begin(), simpleAttr.end()), "shaders/simpleVert.spv", "shaders/simpleFrag.spv");
 
 
 		createCommandPool();
 
 		createSampler(textureSampler);
+		createSampler(shadowSampler, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER);
 		createTextureImage(defaultImage, defaultImageMemory, "default.png");
 		defaultImageView = createImageView(defaultImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 
@@ -690,6 +712,8 @@ private:
 
 
 		createShadowFramebuffer(shadowDepthImageView, shadowExtent, shadowFramebuffer);
+
+		createMotionFramebuffer();
 
 		createVertexBuffersForAllMeshes(sceneGraph.meshes);
 
@@ -944,7 +968,7 @@ private:
 
 	}
 
-	void createSampler(VkSampler& sampler) {
+	void createSampler(VkSampler& sampler, VkSamplerAddressMode mode = VK_SAMPLER_ADDRESS_MODE_REPEAT) {
 		VkSamplerCreateInfo samplerInfo{};
 		samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
 		samplerInfo.magFilter = VK_FILTER_LINEAR; // VK_FILTER_NEAREST or VK_FILTER_LINEAR
@@ -955,9 +979,9 @@ private:
 		// VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE
 		// VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE
 		// VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER
-		samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-		samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-		samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		samplerInfo.addressModeU = mode;
+		samplerInfo.addressModeV = mode;
+		samplerInfo.addressModeW = mode;
 
 		VkPhysicalDeviceProperties properties{};
 		vkGetPhysicalDeviceProperties(physicalDevice, &properties);
@@ -1185,7 +1209,7 @@ private:
 		}
 	}
 
-	void createShadowFramebuffer(VkImageView shadowImageView, VkExtent2D& extent, VkFramebuffer& shadowFramebuffer) {
+	void createShadowFramebuffer(VkImageView& shadowImageView, VkExtent2D& extent, VkFramebuffer& shadowFramebuffer) {
 		VkImageView attachments[] = { shadowImageView };
 
 		VkFramebufferCreateInfo framebufferInfo = {};
@@ -1198,6 +1222,23 @@ private:
 		framebufferInfo.layers = 1;
 
 		if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &shadowFramebuffer) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create framebuffer!");
+		}
+	}
+
+	void createMotionFramebuffer() {
+		VkImageView attachments[] = { motionImageView, depthImageView };
+
+		VkFramebufferCreateInfo framebufferInfo = {};
+		framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+		framebufferInfo.renderPass = motionRenderPass;
+		framebufferInfo.attachmentCount = 2;
+		framebufferInfo.pAttachments = attachments;
+		framebufferInfo.width = swapChainExtent.width;
+		framebufferInfo.height = swapChainExtent.height;
+		framebufferInfo.layers = 1;
+
+		if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &motionFramebuffer) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create framebuffer!");
 		}
 	}
@@ -1359,7 +1400,7 @@ private:
 				VkDescriptorImageInfo shadowmapImageInfo{};
 				shadowmapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 				shadowmapImageInfo.imageView = shadowDepthImageView;
-				shadowmapImageInfo.sampler = textureSampler;
+				shadowmapImageInfo.sampler = shadowSampler;
 
 				std::array<VkWriteDescriptorSet, 7> descriptorWrites{};
 
@@ -2065,6 +2106,7 @@ private:
 	}
 
 	void renderShadowNode(const Node& node, const int& globalNodeIndex, VkCommandBuffer commandBuffer, int currentFrame, glm::mat4& parentMatrix) {
+		static glm::mat4 lastFrameModelMatrix;
 		glm::mat4 modelMatrix = calculateModelMatrix(node);
 
 		int nodeIndex = sceneGraph.getNodeIndex(sceneGraph.nodes, node);
@@ -2118,7 +2160,7 @@ private:
 
 		pushConstants.model = modelMatrix;
 		vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants), &pushConstants);
-		updateUniformBuffer(currentFrame, nodeIndex);
+		updateUniformBuffer(currentFrame, nodeIndex, lastFrameModelMatrix);
 
 		if (node.mesh >= 0) {
 
@@ -2131,6 +2173,8 @@ private:
 			vkCmdDraw(commandBuffer, static_cast<uint32_t>(mesh.count), 1, 0, 0);
 		}
 
+		lastFrameModelMatrix = modelMatrix;
+
 		for (int childIndex : node.children) {
 			int containerIndex = sceneGraph.globalNodeIndexMap.at(childIndex);
 			const Node& childNode = sceneGraph.nodes.at(containerIndex);
@@ -2141,6 +2185,7 @@ private:
 	void renderNode(const Node& node, const int& globalNodeIndex, VkCommandBuffer commandBuffer, int currentFrame, glm::mat4& parentMatrix) {
 
 		glm::mat4 modelMatrix;
+		static glm::mat4 lastFrameModelMatrix;
 		int nodeIndex = sceneGraph.getNodeIndex(sceneGraph.nodes, node);
 
 		if (nodeHasAnimation(globalNodeIndex)) {
@@ -2158,6 +2203,7 @@ private:
 		else {
 			modelMatrix = calculateModelMatrix(node);
 		}
+
 
 		// apply parent nodes
 		modelMatrix = parentMatrix * modelMatrix;
@@ -2237,7 +2283,8 @@ private:
 		pushConstants.materialType = materialType;
 		pushConstants.lightCount = lights.size();
 		vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants), &pushConstants);
-		updateUniformBuffer(currentFrame, nodeIndex);
+		
+		updateUniformBuffer(currentFrame, nodeIndex, lastFrameModelMatrix);
 
 
 		if (node.mesh >= 0) {
@@ -2281,6 +2328,7 @@ private:
 			updateLightBuffer(lights);
 		}
 
+		lastFrameModelMatrix = modelMatrix;
 
 		// recursively render children nodes
 		if (!node.children.empty()) {
@@ -3364,7 +3412,7 @@ private:
 		return glm::slerp(start, end, t);
 	}
 
-	void updateUniformBuffer(uint32_t currentImage, const int nodeIndex) {
+	void updateUniformBuffer(uint32_t currentImage, const int nodeIndex, const glm::mat4 lastFrameModelMatrix) {
 
 		UniformBufferObject ubo{};
 
@@ -3377,7 +3425,11 @@ private:
 		glm::mat4 lightView = glm::lookAt(lightPos, lightPos + lightDir, upVector);
 		glm::mat4 lightSpaceMatrix = lightProjection * lightView;
 
+		lightSpaceMatrix = debugCamera.GetProjectionMatrix() * debugCamera.GetViewMatrix();
+
 		ubo.lightSpace = lightSpaceMatrix;
+
+		ubo.previousModel = lastFrameModelMatrix;
 
 		if (isDebugCameraActive) {
 
@@ -3481,6 +3533,7 @@ private:
 		vkDestroyFramebuffer(device, shadowFramebuffer, nullptr);
 
 		vkDestroySampler(device, textureSampler, nullptr);
+		vkDestroySampler(device, shadowSampler, nullptr);
 
 		cleanupAllTextures(materials);
 

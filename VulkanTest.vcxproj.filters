@@ -58,5 +58,11 @@
     <None Include="shaders\shadowshader.vert">
       <Filter>Resource Files</Filter>
     </None>
+    <None Include="shaders\motion.frag">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="shaders\motion.vert">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
 </Project>
