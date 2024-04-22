@@ -9,7 +9,9 @@ layout(location = 0) out vec4 outColor;
 layout(binding = 0) uniform UniformBufferObject {
     mat4 view;
     mat4 proj;
-    vec3 cameraPos;
+    mat4 lightSpace;
+    mat4 previousModel;
+    vec4 cameraPos;
 } ubo;
 
 layout(binding = 1) uniform sampler2D texSampler;
@@ -23,6 +25,7 @@ layout(push_constant) uniform PushConstants {
 	float roughness;
 	float metalness;
 	int materialType;
+    int lightCount;
 } pushConstants;
 
 

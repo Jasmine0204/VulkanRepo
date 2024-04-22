@@ -1990,7 +1990,47 @@ private:
 
 		vkCmdEndRenderPass(commandBuffer);
 
+		// motion blur render pass
+		VkRenderPassBeginInfo motionRenderPassInfo{};
+		motionRenderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+		motionRenderPassInfo.renderPass = motionRenderPass;
+		motionRenderPassInfo.framebuffer = motionFramebuffer;
+		motionRenderPassInfo.renderArea.offset = { 0, 0 };
+		motionRenderPassInfo.renderArea.extent = swapChainExtent;
 
+		std::array<VkClearValue, 2> motionClearValues{};
+		motionClearValues[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
+		motionClearValues[1].depthStencil = { 1.0f, 0 };
+
+		motionRenderPassInfo.clearValueCount = static_cast<uint32_t>(motionClearValues.size());
+		motionRenderPassInfo.pClearValues = motionClearValues.data();
+		vkCmdBeginRenderPass(commandBuffer, &motionRenderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+		VkViewport motionViewport{};
+		motionViewport.x = 0.0f;
+		motionViewport.y = 0.0f;
+		motionViewport.width = static_cast<float>(swapChainExtent.width);
+		motionViewport.height = static_cast<float>(swapChainExtent.height);
+		motionViewport.minDepth = 0.0f;
+		motionViewport.maxDepth = 1.0f;
+		vkCmdSetViewport(commandBuffer, 0, 1, &motionViewport);
+
+		VkRect2D viewportScissor{};
+		viewportScissor.offset = { 0, 0 };
+		viewportScissor.extent = swapChainExtent;
+		vkCmdSetScissor(commandBuffer, 0, 1, &viewportScissor);
+
+		// render motion vector map
+		for (int rootGlobalIndex : sceneGraph.parsedScene.roots) {
+			int containerIndex = sceneGraph.globalNodeIndexMap.at(rootGlobalIndex); // directly get rootGlobalIndex
+			const Node& rootNode = sceneGraph.nodes.at(containerIndex);
+			glm::mat4 parentMatrix = glm::mat4(1.0f);
+			renderMotionNode(rootNode, rootGlobalIndex, commandBuffer, currentFrame, parentMatrix);
+		}
+
+		vkCmdEndRenderPass(commandBuffer);
+
+		// main renderpass
 		VkRenderPassBeginInfo renderPassInfo{};
 		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 		renderPassInfo.renderPass = renderPass;
@@ -2179,6 +2219,83 @@ private:
 			int containerIndex = sceneGraph.globalNodeIndexMap.at(childIndex);
 			const Node& childNode = sceneGraph.nodes.at(containerIndex);
 			renderShadowNode(childNode, childIndex, commandBuffer, currentFrame, modelMatrix);
+		}
+	}
+
+	void renderMotionNode(const Node& node, const int& globalNodeIndex, VkCommandBuffer commandBuffer, int currentFrame, glm::mat4& parentMatrix) {
+		static glm::mat4 lastFrameModelMatrix;
+		glm::mat4 modelMatrix = calculateModelMatrix(node);
+
+		int nodeIndex = sceneGraph.getNodeIndex(sceneGraph.nodes, node);
+
+		if (nodeHasAnimation(globalNodeIndex)) {
+			// get clip
+			std::vector<AnimationClip> matchedClips = getAnimationClipsForNode(globalNodeIndex);
+
+			// model matrix = scale * rotation * translation
+			if (!matchedClips.empty()) {
+				modelMatrix = calculateModelMatrix(node);
+
+				glm::mat4 animatedMatrix = calculateModelMatrixForNodeAtTime(matchedClips, animTime, modelMatrix, nodes[nodeIndex]);
+				modelMatrix = animatedMatrix;
+			}
+		}
+		else {
+			modelMatrix = calculateModelMatrix(node);
+		}
+
+		modelMatrix = parentMatrix * modelMatrix;
+
+		// calculate materialIndex
+		int materialIndex = 0;
+		if (node.mesh >= 0) {
+			int meshContainerIndex = sceneGraph.meshIndexMap.at(node.mesh);
+			const Mesh& mesh = sceneGraph.meshes.at(meshContainerIndex);
+
+			Attribute attr = mesh.getAttribute("POSITION");
+			int stride = attr.stride;
+
+			if (stride == 52) {
+				materialIndex = sceneGraph.materialIndexMap.at(mesh.material);
+			}
+		}
+
+		// calculate descriptor set index 
+		int descriptorSetIndex = currentFrame * materials.size() + materialIndex;
+
+		// bind descriptor
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[descriptorSetIndex], 0, nullptr);
+
+		if (node.light >= 0) {
+			int containerIndex = sceneGraph.lightIndexMap[node.light];
+			lights[containerIndex].position = glm::vec4(node.translation, 0.0);
+			lights[containerIndex].rotation = glm::vec4(quatToVec(node.rotation), 0.0);
+			updateLightBuffer(lights);
+		}
+
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, motionPipeline);
+
+		pushConstants.model = modelMatrix;
+		vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants), &pushConstants);
+		updateUniformBuffer(currentFrame, nodeIndex, lastFrameModelMatrix);
+
+		if (node.mesh >= 0) {
+
+
+			const Mesh& mesh = sceneGraph.meshes.at(sceneGraph.meshIndexMap.at(node.mesh));
+			VkBuffer vertexBuffers[] = { mesh.vertexBuffer };
+			VkDeviceSize offsets[] = { 0 };
+			vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+
+			vkCmdDraw(commandBuffer, static_cast<uint32_t>(mesh.count), 1, 0, 0);
+		}
+
+		lastFrameModelMatrix = modelMatrix;
+
+		for (int childIndex : node.children) {
+			int containerIndex = sceneGraph.globalNodeIndexMap.at(childIndex);
+			const Node& childNode = sceneGraph.nodes.at(containerIndex);
+			renderMotionNode(childNode, childIndex, commandBuffer, currentFrame, modelMatrix);
 		}
 	}
 
@@ -3532,6 +3649,12 @@ private:
 		vkFreeMemory(device, shadowDepthImageMemory, nullptr);
 		vkDestroyFramebuffer(device, shadowFramebuffer, nullptr);
 
+		vkDestroyImageView(device, motionImageView, nullptr);
+		vkDestroyImage(device, motionImage, nullptr);
+		vkFreeMemory(device, motionImageMemory, nullptr);
+		vkDestroyFramebuffer(device, motionFramebuffer, nullptr);
+
+
 		vkDestroySampler(device, textureSampler, nullptr);
 		vkDestroySampler(device, shadowSampler, nullptr);
 
@@ -3583,9 +3706,11 @@ private:
 		vkDestroyPipeline(device, graphicsPipeline, nullptr);
 		vkDestroyPipeline(device, simpleGraphicsPipeline, nullptr);
 		vkDestroyPipeline(device, shadowPipeline, nullptr);
+		vkDestroyPipeline(device, motionPipeline, nullptr);
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		vkDestroyRenderPass(device, swapChainRenderPass, nullptr);
 		vkDestroyRenderPass(device, shadowRenderPass, nullptr);
+		vkDestroyRenderPass(device, motionRenderPass, nullptr);
 
 		vkDestroyDevice(device, nullptr);
 		vkDestroySurfaceKHR(instance, surface, nullptr);

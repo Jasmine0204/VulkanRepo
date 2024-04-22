@@ -4,6 +4,7 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 view;
     mat4 proj;
     mat4 lightSpace;
+    mat4 previousModel;
     vec3 cameraPos;
 } ubo;
 
