@@ -49,6 +49,8 @@ layout(binding = 5) buffer lightBuffer {
 
 layout(binding = 6) uniform sampler2D shadowMap;
 
+layout(binding = 7) uniform sampler2D motionMap;
+
 layout(push_constant) uniform PushConstants {
     mat4 model;
 	vec4 albedoColor;
@@ -176,7 +178,7 @@ void main() {
 
     float roughness = pushConstants.roughness;
     float metalness = pushConstants.metalness;
-    
+
     // diffuse mat
     if (pushConstants.materialType == 1) {
        vec3 normalMap = texture(normalMap, fragTexCoord).rgb;

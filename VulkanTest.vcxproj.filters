@@ -64,5 +64,11 @@
     <None Include="shaders\motion.vert">
       <Filter>Resource Files</Filter>
     </None>
+    <None Include="shaders\postshader.frag">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="shaders\postshader.vert">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
 </Project>
