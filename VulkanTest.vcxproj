@@ -166,6 +166,8 @@
     <ClInclude Include="stb_image_write.h" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="shaders\horizonshader.frag" />
+    <None Include="shaders\horizonshader.vert" />
     <None Include="shaders\motion.frag" />
     <None Include="shaders\motion.vert" />
     <None Include="shaders\postshader.frag" />
@@ -176,6 +178,8 @@
     <None Include="shaders\shadowshader.vert" />
     <None Include="shaders\simpleshader.frag" />
     <None Include="shaders\simpleshader.vert" />
+    <None Include="shaders\verticalshader.frag" />
+    <None Include="shaders\verticalshader.vert" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

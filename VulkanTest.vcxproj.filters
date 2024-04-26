@@ -70,5 +70,17 @@
     <None Include="shaders\postshader.vert">
       <Filter>Resource Files</Filter>
     </None>
+    <None Include="shaders\horizonshader.frag">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="shaders\horizonshader.vert">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="shaders\verticalshader.frag">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="shaders\verticalshader.vert">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
 </Project>

@@ -70,6 +70,10 @@
 // A3-Create model: "Rusted Japanese Torii Gates" (https://skfb.ly/o8JtD) by Sousinho is licensed under Creative Commons Attribution 4.0 (http://creativecommons.org/licenses/by/4.0/).
 // A3-Create texture: https://polyhaven.com/a/brown_mud_leaves_01 by Rob Tuytel is licensed under CC0 https://creativecommons.org/publicdomain/zero/1.0/
 
+//Final Reference list
+// https://developer.nvidia.com/gpugems/gpugems3/part-iv-image-effects/chapter-27-motion-blur-post-processing-effect A tutorial of motion blur in OpenGL
+// https://www.slideshare.net/TiagoAlexSousa/graphics-gems-from-cryengine-3-siggraph-2013 Sousa_Graphics_Gems_CryENGINE3
+
 uint32_t WIDTH = 1280;
 uint32_t HEIGHT = 720;
 const int MAX_FRAME_IN_FLIGHT = 2;
@@ -85,7 +89,7 @@ std::string outputFile = "./model/ox_bridge_morning.lambertian.png";
 struct CommandLineOptions {
 	bool headless = false;
 	std::string drawingSize;
-	std::string sceneFile = "./model/A2-Create.s72";
+	std::string sceneFile = "./model/A3-Create.s72";
 	std::string eventFile = "./model/events.txt";
 	bool lambertian = false;
 	std::string inputFile = "./model/ox_bridge_morning.png";
@@ -443,16 +447,20 @@ private:
 	// descriptors and pipeplines
 	VkDescriptorSetLayout descriptorSetLayout;
 	VkPipelineLayout pipelineLayout;
+
 	VkRenderPass swapChainRenderPass;
 	VkRenderPass offscreenRenderPass;
 	VkRenderPass shadowRenderPass;
 	VkRenderPass motionRenderPass;
 	VkRenderPass screenColorRenderPass;
+	VkRenderPass horizontalRenderPass;
+
 	VkPipeline graphicsPipeline;
 	VkPipeline simpleGraphicsPipeline;
 	VkPipeline shadowPipeline;
 	VkPipeline motionPipeline;
 	VkPipeline screenColorPipeline;
+	VkPipeline horizontalPipeline;
 
 	// descriptors
 	VkDescriptorPool descriptorPool;
@@ -575,6 +583,13 @@ private:
 	VkImageView screenColorImageView;
 	VkFramebuffer screenColorFramebuffer;
 
+	// seperate motion blur
+	VkImage horizontalImage;
+	VkDeviceMemory horizontalImageMemory;
+	VkImageView horizontalImageView;
+	VkFramebuffer horizontalFramebuffer;
+
+
 	void initWindow() {
 		glfwInit();
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -694,6 +709,10 @@ private:
 		screenColorImageView = createImageView(screenColorImage, VK_FORMAT_B8G8R8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 		createImageRenderPass(swapChainImageFormat, screenColorRenderPass);
 
+		createImage(swapChainExtent.width, swapChainExtent.height, VK_FORMAT_B8G8R8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, horizontalImage, horizontalImageMemory);
+		horizontalImageView = createImageView(horizontalImage, VK_FORMAT_B8G8R8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
+		createImageRenderPass(swapChainImageFormat, horizontalRenderPass);
+
 		createDescriptorSetLayout();
 		auto bind = Vertex::getBindingDescription();
 		auto attr = Vertex::getAttributeDescriptions();
@@ -709,7 +728,10 @@ private:
 		createGraphicsPipeline(swapChainExtent, screenColorRenderPass, screenColorPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()), "shaders/vert.spv", "shaders/frag.spv");
 		createGraphicsPipeline(swapChainExtent, screenColorRenderPass, simpleGraphicsPipeline, simpleBind, std::vector<VkVertexInputAttributeDescription>(simpleAttr.begin(), simpleAttr.end()), "shaders/simpleVert.spv", "shaders/simpleFrag.spv");
 		// post-processing
+		createPostGraphicsPipeline(swapChainExtent, horizontalRenderPass, horizontalPipeline, "shaders/horizontalvert.spv", "shaders/horizontalfrag.spv");
+		//createPostGraphicsPipeline(swapChainExtent, swapChainRenderPass, graphicsPipeline, "shaders/verticalvert.spv", "shaders/verticalfrag.spv");
 		createPostGraphicsPipeline(swapChainExtent, swapChainRenderPass, graphicsPipeline, "shaders/postvert.spv", "shaders/postfrag.spv");
+
 
 
 		createCommandPool();
@@ -746,6 +768,8 @@ private:
 		createMotionFramebuffer();
 
 		createScreenColorFramebuffer();
+
+		createHorizontalFramebuffer();
 
 		createVertexBuffersForAllMeshes(sceneGraph.meshes);
 		createPostPorcessingVertexBuffer();
@@ -1276,6 +1300,23 @@ private:
 		}
 	}
 
+	void createHorizontalFramebuffer() {
+		VkImageView attachments[] = { horizontalImageView, depthImageView };
+
+		VkFramebufferCreateInfo framebufferInfo = {};
+		framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+		framebufferInfo.renderPass = horizontalRenderPass;
+		framebufferInfo.attachmentCount = 2;
+		framebufferInfo.pAttachments = attachments;
+		framebufferInfo.width = swapChainExtent.width;
+		framebufferInfo.height = swapChainExtent.height;
+		framebufferInfo.layers = 1;
+
+		if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &horizontalFramebuffer) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create framebuffer!");
+		}
+	}
+
 	void createMotionFramebuffer() {
 		VkImageView attachments[] = { motionImageView, depthImageView };
 
@@ -1396,8 +1437,7 @@ private:
 
 		size_t totalMaterials = materials.size();
 		std::cout << "total materials" << totalMaterials << "\n";
-		size_t totalNodes = sceneGraph.getNodes().size();
-		size_t totalBuffers = totalMaterials * MAX_FRAME_IN_FLIGHT * totalNodes;
+		size_t totalBuffers = totalMaterials * MAX_FRAME_IN_FLIGHT;
 
 		std::vector<VkDescriptorSetLayout> layouts(totalBuffers, descriptorSetLayout);
 		VkDescriptorSetAllocateInfo allocInfo{};
@@ -1463,7 +1503,12 @@ private:
 				screenColorImageInfo.imageView = screenColorImageView;
 				screenColorImageInfo.sampler = shadowSampler;
 
-				std::array<VkWriteDescriptorSet, 9> descriptorWrites{};
+				VkDescriptorImageInfo horizontalImageInfo{};
+				horizontalImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				horizontalImageInfo.imageView = horizontalImageView;
+				horizontalImageInfo.sampler = shadowSampler;
+
+				std::array<VkWriteDescriptorSet, 10> descriptorWrites{};
 
 				descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 				descriptorWrites[0].dstSet = descriptorSet;
@@ -1589,6 +1634,15 @@ private:
 				descriptorWrites[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 				descriptorWrites[8].descriptorCount = 1;
 				descriptorWrites[8].pImageInfo = &screenColorImageInfo;
+
+				descriptorWrites[9].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+				descriptorWrites[9].dstSet = descriptorSets[descriptorIndex];
+				descriptorWrites[9].dstBinding = 9;
+				descriptorWrites[9].dstArrayElement = 0;
+				descriptorWrites[9].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+				descriptorWrites[9].descriptorCount = 1;
+				descriptorWrites[9].pImageInfo = &horizontalImageInfo;
+
 
 				vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 			}
@@ -1734,7 +1788,15 @@ private:
 		screenColorLayoutBinding.pImmutableSamplers = nullptr;
 		screenColorLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-		std::array<VkDescriptorSetLayoutBinding, 9> bindings = { uboLayoutBinding, samplerLayoutBinding, normalmapLayoutBinding, cubemapLayoutBinding, lambertianCubemapLayoutBinding, lightLayoutBinding, shadowLayoutBinding, motionLayoutBinding, screenColorLayoutBinding };
+		// horizontal motion blur pic
+		VkDescriptorSetLayoutBinding horizontalLayoutBinding{};
+		horizontalLayoutBinding.binding = 9;
+		horizontalLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		horizontalLayoutBinding.descriptorCount = 1;
+		horizontalLayoutBinding.pImmutableSamplers = nullptr;
+		horizontalLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+		std::array<VkDescriptorSetLayoutBinding, 10> bindings = { uboLayoutBinding, samplerLayoutBinding, normalmapLayoutBinding, cubemapLayoutBinding, lambertianCubemapLayoutBinding, lightLayoutBinding, shadowLayoutBinding, motionLayoutBinding, screenColorLayoutBinding, horizontalLayoutBinding };
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
 		layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -2200,6 +2262,51 @@ private:
 
 		vkCmdEndRenderPass(commandBuffer);
 
+		/* post processing renderpass
+		VkRenderPassBeginInfo postProcessingRenderPassInfo1{};
+		postProcessingRenderPassInfo1.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+		postProcessingRenderPassInfo1.renderPass = horizontalRenderPass;
+		postProcessingRenderPassInfo1.framebuffer = horizontalFramebuffer;
+		postProcessingRenderPassInfo1.renderArea.offset = { 0, 0 };
+		postProcessingRenderPassInfo1.renderArea.extent = swapChainExtent;
+
+		std::array<VkClearValue, 2> postProcessingClearValues1{};
+		postProcessingClearValues1[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
+		// The range of depths in the depth buffer is 0.0 to 1.0 in Vulkan
+		// 1.0 lies at the far view plane and 0.0 at the near view plane
+		// The initial value at each point in the depth buffer should be the furthest possible depth, which is 1.0.
+		postProcessingClearValues1[1].depthStencil = { 1.0f, 0 };
+
+		postProcessingRenderPassInfo1.clearValueCount = static_cast<uint32_t>(postProcessingClearValues1.size());
+		postProcessingRenderPassInfo1.pClearValues = postProcessingClearValues1.data();
+		vkCmdBeginRenderPass(commandBuffer, &postProcessingRenderPassInfo1, VK_SUBPASS_CONTENTS_INLINE);
+
+		VkViewport postProcessingViewport1{};
+		postProcessingViewport1.x = 0.0f;
+		postProcessingViewport1.y = 0.0f;
+		postProcessingViewport1.width = static_cast<float>(swapChainExtent.width);
+		postProcessingViewport1.height = static_cast<float>(swapChainExtent.height);
+		postProcessingViewport1.minDepth = 0.0f;
+		postProcessingViewport1.maxDepth = 1.0f;
+		vkCmdSetViewport(commandBuffer, 0, 1, &postProcessingViewport1);
+
+		VkRect2D postProcessingScissor1{};
+		postProcessingScissor1.offset = { 0, 0 };
+		postProcessingScissor1.extent = swapChainExtent;
+		vkCmdSetScissor(commandBuffer, 0, 1, &postProcessingScissor1);
+
+		// render frame
+		for (int rootGlobalIndex : sceneGraph.parsedScene.roots) {
+			int containerIndex = sceneGraph.globalNodeIndexMap.at(rootGlobalIndex); // directly get rootGlobalIndex
+			const Node& rootNode = sceneGraph.nodes.at(containerIndex);
+			glm::mat4 parentMatrix = glm::mat4(1.0f);
+			renderPostProcessingNode(rootNode, rootGlobalIndex, commandBuffer, currentFrame, horizontalPipeline);
+		}
+
+		//vkCmdDrawIndexed(commandBuffer, indices.size(), 1, 0, 0, 0);
+
+		vkCmdEndRenderPass(commandBuffer);*/
+
 		// post processing renderpass
 		VkRenderPassBeginInfo postProcessingRenderPassInfo{};
 		postProcessingRenderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -2238,7 +2345,7 @@ private:
 			int containerIndex = sceneGraph.globalNodeIndexMap.at(rootGlobalIndex); // directly get rootGlobalIndex
 			const Node& rootNode = sceneGraph.nodes.at(containerIndex);
 			glm::mat4 parentMatrix = glm::mat4(1.0f);
-			renderPostProcessingNode(rootNode, rootGlobalIndex, commandBuffer, currentFrame);
+			renderPostProcessingNode(rootNode, rootGlobalIndex, commandBuffer, currentFrame, graphicsPipeline);
 		}
 
 		//vkCmdDrawIndexed(commandBuffer, indices.size(), 1, 0, 0, 0);
@@ -2316,9 +2423,6 @@ private:
 	}
 
 	void renderShadowNode(const Node& node, const int& globalNodeIndex, VkCommandBuffer commandBuffer, int currentFrame, glm::mat4& parentMatrix) {
-		static glm::mat4 lastFrameModelMatrix = glm::mat4(1.0);
-		static glm::mat4 lastFrameViewMatrix = glm::mat4(1.0);
-		static glm::mat4 lastFrameProjMatrix = glm::mat4(1.0);
 		
 		glm::mat4 modelMatrix = calculateModelMatrix(node);
 
@@ -2373,7 +2477,7 @@ private:
 
 		pushConstants.model = modelMatrix;
 		vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants), &pushConstants);
-		updateUniformBuffer(currentFrame, nodeIndex, modelMatrix, lastFrameModelMatrix, lastFrameViewMatrix, lastFrameProjMatrix);
+		updateUniformBuffer(currentFrame, nodeIndex, modelMatrix);
 
 		if (node.mesh >= 0) {
 
@@ -2395,11 +2499,6 @@ private:
 
 	void renderMotionNode(const Node& node, const int& globalNodeIndex, VkCommandBuffer commandBuffer, int currentFrame, glm::mat4& parentMatrix) {
 		glm::mat4 modelMatrix = calculateModelMatrix(node);
-
-		static glm::mat4 lastFrameModelMatrix = glm::mat4(1.0);
-		static glm::mat4 lastFrameViewMatrix = glm::mat4(1.0);
-		static glm::mat4 lastFrameProjMatrix = glm::mat4(1.0);
-
 
 		int nodeIndex = sceneGraph.getNodeIndex(sceneGraph.nodes, node);
 
@@ -2502,7 +2601,7 @@ private:
 
 		vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants), &pushConstants);
 
-		updateUniformBuffer(currentFrame, nodeIndex, modelMatrix, lastFrameModelMatrix, lastFrameViewMatrix, lastFrameProjMatrix);
+		updateUniformBuffer(currentFrame, nodeIndex, modelMatrix);
 
 		if (node.mesh >= 0) {
 
@@ -2522,16 +2621,9 @@ private:
 			renderMotionNode(childNode, childIndex, commandBuffer, currentFrame, modelMatrix);
 		}
 
-		lastFrameModelMatrix = modelMatrix;
-		lastFrameViewMatrix = viewMat;
-		lastFrameProjMatrix = projMat;
 	}
 
 	void renderNode(const Node& node, const int& globalNodeIndex, VkCommandBuffer commandBuffer, int currentFrame, glm::mat4& parentMatrix) {
-
-		static glm::mat4 lastFrameModelMatrix = glm::mat4(1.0);
-		static glm::mat4 lastFrameViewMatrix = glm::mat4(1.0);
-		static glm::mat4 lastFrameProjMatrix = glm::mat4(1.0);
 
 		glm::mat4 modelMatrix;
 		int nodeIndex = sceneGraph.getNodeIndex(sceneGraph.nodes, node);
@@ -2636,7 +2728,7 @@ private:
 		
 		vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants), &pushConstants);
 
-		updateUniformBuffer(currentFrame, nodeIndex, modelMatrix, lastFrameModelMatrix, lastFrameViewMatrix, lastFrameProjMatrix);
+		updateUniformBuffer(currentFrame, nodeIndex, modelMatrix);
 
 		if (node.mesh >= 0) {
 
@@ -2687,7 +2779,7 @@ private:
 		}
 	}
 
-	void renderPostProcessingNode(const Node& node, const int& globalNodeIndex, VkCommandBuffer commandBuffer, int currentFrame) {
+	void renderPostProcessingNode(const Node& node, const int& globalNodeIndex, VkCommandBuffer commandBuffer, int currentFrame, VkPipeline graphicsPipeline) {
 
 		// calculate materialIndex
 		int materialIndex = 0;
@@ -3987,8 +4079,9 @@ private:
 		return glm::slerp(start, end, t);
 	}
 
-	void updateUniformBuffer(uint32_t currentImage, const int nodeIndex, const glm::mat4& modelMatrix, glm::mat4& lastFrameModelMatrix, glm::mat4& lastFrameViewMatrix, glm::mat4& lastFrameProjMatrix) {
+	void updateUniformBuffer(uint32_t currentImage, const int nodeIndex, const glm::mat4& modelMatrix) {
 
+		static glm::mat4 lastFrameProjMatrix, lastFrameViewMatrix, lastFrameModelMatrix;
 		UniformBufferObject ubo{};
 
 		ubo.previousModelMat = lastFrameModelMatrix;
@@ -4035,6 +4128,10 @@ private:
 
 		// GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted;
 		ubo.projection[1][1] *= -1;
+
+		lastFrameModelMatrix = modelMatrix;
+		lastFrameViewMatrix = ubo.view;
+		lastFrameProjMatrix = ubo.projection;
 
 		memcpy(uniformBuffersMapped[currentFrame], &ubo, sizeof(ubo)); //we only map the uniform buffer once
 	}
@@ -4118,6 +4215,11 @@ private:
 		vkFreeMemory(device, screenColorImageMemory, nullptr);
 		vkDestroyFramebuffer(device, screenColorFramebuffer, nullptr);
 
+		vkDestroyImageView(device, horizontalImageView, nullptr);
+		vkDestroyImage(device, horizontalImage, nullptr);
+		vkFreeMemory(device, horizontalImageMemory, nullptr);
+		vkDestroyFramebuffer(device, horizontalFramebuffer, nullptr);
+
 
 		vkDestroySampler(device, textureSampler, nullptr);
 		vkDestroySampler(device, shadowSampler, nullptr);
@@ -4175,11 +4277,13 @@ private:
 		vkDestroyPipeline(device, shadowPipeline, nullptr);
 		vkDestroyPipeline(device, motionPipeline, nullptr);
 		vkDestroyPipeline(device, screenColorPipeline, nullptr);
+		vkDestroyPipeline(device, horizontalPipeline, nullptr);
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		vkDestroyRenderPass(device, swapChainRenderPass, nullptr);
 		vkDestroyRenderPass(device, shadowRenderPass, nullptr);
 		vkDestroyRenderPass(device, motionRenderPass, nullptr);
 		vkDestroyRenderPass(device, screenColorRenderPass, nullptr);
+		vkDestroyRenderPass(device, horizontalRenderPass, nullptr);
 
 		vkDestroyDevice(device, nullptr);
 		vkDestroySurfaceKHR(instance, surface, nullptr);
