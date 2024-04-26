@@ -126,12 +126,8 @@ std::vector<char> readBinaryFile(const std::string& filename) {
 // a huge triangle for post processing 
 const std::vector<float> vertices = {
 	-1.0f, -1.0f,
-	 1.0f,  1.0f,
-	-1.0f,  1.0f,
-
-	-1.0f, -1.0f,
-	 1.0f, -1.0f,
-	 1.0f,  1.0f
+	-1.0f,  3.0f,
+	 3.0f, -1.0f
 };
 
 // parse vertices (& vertices with simple material)
@@ -257,7 +253,9 @@ struct UniformBufferObject {
 	glm::mat4 view;
 	glm::mat4 projection;
 	glm::mat4 lightSpace;
-	glm::mat4 previousModel;
+	glm::mat4 previousModelMat;
+	glm::mat4 previousViewMat;
+	glm::mat4 previousProjMat;
 	glm::vec4 cameraPos;
 };
 
@@ -266,6 +264,7 @@ struct UniformBufferObject {
 struct PushConstants {
 	glm::mat4 model;
 	glm::vec4 albedoColor;
+	glm::vec2 motionVector;
 	float roughness;
 	float metalness;
 	int materialType;
@@ -463,6 +462,8 @@ private:
 	std::vector<VkFramebuffer> swapChainFramebuffers;
 	VkCommandPool commandPool;
 	std::vector<VkCommandBuffer> swapChainCommandBuffers;
+
+	// sync objects
 	std::vector<VkSemaphore> imageAvailableSemaphores;
 	std::vector<VkSemaphore> renderFinishedSemaphores;
 	std::vector<VkFence> inFlightFences;
@@ -566,6 +567,7 @@ private:
 	VkDeviceMemory motionImageMemory;
 	VkImageView motionImageView;
 	VkFramebuffer motionFramebuffer;
+	
 
 	// screen color
 	VkImage screenColorImage;
@@ -699,21 +701,21 @@ private:
 		auto simpleAttr = SimpleVertex::getAttributeDescriptions();
 		createPipelineLayout();
 
-		createGraphicsPipeline(swapChainExtent, screenColorRenderPass, screenColorPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()), "shaders/vert.spv", "shaders/frag.spv");
-
-		createGraphicsPipeline(swapChainExtent, motionRenderPass, motionPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()), "shaders/motionvert.spv", "shaders/motionfrag.spv");
-
-		createPostGraphicsPipeline(swapChainExtent, swapChainRenderPass, graphicsPipeline, "shaders/postvert.spv", "shaders/postfrag.spv");
-
+		// shadow
 		createShadowPipeline(shadowExtent, shadowRenderPass, shadowPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()), "shaders/shadowvert.spv", "shaders/shadowfrag.spv");
-
-		createGraphicsPipeline(swapChainExtent, swapChainRenderPass, simpleGraphicsPipeline, simpleBind, std::vector<VkVertexInputAttributeDescription>(simpleAttr.begin(), simpleAttr.end()), "shaders/simpleVert.spv", "shaders/simpleFrag.spv");
+		// motion
+		createGraphicsPipeline(swapChainExtent, motionRenderPass, motionPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()), "shaders/motionvert.spv", "shaders/motionfrag.spv");
+		// screencolor
+		createGraphicsPipeline(swapChainExtent, screenColorRenderPass, screenColorPipeline, bind, std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end()), "shaders/vert.spv", "shaders/frag.spv");
+		createGraphicsPipeline(swapChainExtent, screenColorRenderPass, simpleGraphicsPipeline, simpleBind, std::vector<VkVertexInputAttributeDescription>(simpleAttr.begin(), simpleAttr.end()), "shaders/simpleVert.spv", "shaders/simpleFrag.spv");
+		// post-processing
+		createPostGraphicsPipeline(swapChainExtent, swapChainRenderPass, graphicsPipeline, "shaders/postvert.spv", "shaders/postfrag.spv");
 
 
 		createCommandPool();
 
 		createSampler(textureSampler);
-		createSampler(shadowSampler, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER);
+		createSampler(shadowSampler, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
 		createTextureImage(defaultImage, defaultImageMemory, "default.png");
 		defaultImageView = createImageView(defaultImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 
@@ -1394,7 +1396,8 @@ private:
 
 		size_t totalMaterials = materials.size();
 		std::cout << "total materials" << totalMaterials << "\n";
-		size_t totalBuffers = totalMaterials * MAX_FRAME_IN_FLIGHT;
+		size_t totalNodes = sceneGraph.getNodes().size();
+		size_t totalBuffers = totalMaterials * MAX_FRAME_IN_FLIGHT * totalNodes;
 
 		std::vector<VkDescriptorSetLayout> layouts(totalBuffers, descriptorSetLayout);
 		VkDescriptorSetAllocateInfo allocInfo{};
@@ -1457,8 +1460,8 @@ private:
 
 				VkDescriptorImageInfo screenColorImageInfo{};
 				screenColorImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-				screenColorImageInfo.imageView = motionImageView;
-				screenColorImageInfo.sampler = textureSampler;
+				screenColorImageInfo.imageView = screenColorImageView;
+				screenColorImageInfo.sampler = shadowSampler;
 
 				std::array<VkWriteDescriptorSet, 9> descriptorWrites{};
 
@@ -1595,40 +1598,41 @@ private:
 	void createDescriptorPool() {
 		//  allocate one of these descriptors for every frame
 		size_t totalMaterials = materials.size();
+		size_t totalNodes = sceneGraph.getNodes().size();
 		std::array<VkDescriptorPoolSize, 9> poolSizes{};
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
+		poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * totalNodes);
 
 		poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
+		poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * totalNodes);
 
 		poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[2].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
+		poolSizes[2].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * totalNodes);
 
 		poolSizes[3].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[3].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
+		poolSizes[3].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * totalNodes);
 
 		poolSizes[4].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[4].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
+		poolSizes[4].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * totalNodes);
 
 		poolSizes[5].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-		poolSizes[5].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
+		poolSizes[5].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * totalNodes);
 
 		poolSizes[6].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[6].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
+		poolSizes[6].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * totalNodes);
 
 		poolSizes[7].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[7].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
+		poolSizes[7].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * totalNodes);
 
 		poolSizes[8].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[8].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials);
+		poolSizes[8].descriptorCount = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * totalNodes);
 
 
 		VkDescriptorPoolCreateInfo poolInfo{};
 		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 		poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
 		poolInfo.pPoolSizes = poolSizes.data();
-		poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * 9);
+		poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAME_IN_FLIGHT * totalMaterials * totalNodes * 9);
 
 		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create descriptor pool!");
@@ -2080,10 +2084,10 @@ private:
 		shadowRenderPassInfo.renderArea.offset = { 0, 0 };
 		shadowRenderPassInfo.renderArea.extent = shadowExtent;
 
-		VkClearValue clearValue = {};
-		clearValue.depthStencil = { 1.0f, 0 };
+		VkClearValue shadowClearValue = {};
+		shadowClearValue.depthStencil = { 1.0f, 0 };
 		shadowRenderPassInfo.clearValueCount = 1;
-		shadowRenderPassInfo.pClearValues = &clearValue;
+		shadowRenderPassInfo.pClearValues = &shadowClearValue;
 
 		vkCmdBeginRenderPass(commandBuffer, &shadowRenderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
@@ -2120,7 +2124,7 @@ private:
 		motionRenderPassInfo.renderArea.extent = swapChainExtent;
 
 		std::array<VkClearValue, 2> motionClearValues{};
-		motionClearValues[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
+		motionClearValues[0].color = { {0.5f, 0.5f, 0.0f, 1.0f} };
 		motionClearValues[1].depthStencil = { 1.0f, 0 };
 
 		motionRenderPassInfo.clearValueCount = static_cast<uint32_t>(motionClearValues.size());
@@ -2136,10 +2140,10 @@ private:
 		motionViewport.maxDepth = 1.0f;
 		vkCmdSetViewport(commandBuffer, 0, 1, &motionViewport);
 
-		VkRect2D viewportScissor{};
-		viewportScissor.offset = { 0, 0 };
-		viewportScissor.extent = swapChainExtent;
-		vkCmdSetScissor(commandBuffer, 0, 1, &viewportScissor);
+		VkRect2D motionScissor{};
+		motionScissor.offset = { 0, 0 };
+		motionScissor.extent = swapChainExtent;
+		vkCmdSetScissor(commandBuffer, 0, 1, &motionScissor);
 
 		// render motion vector map
 		for (int rootGlobalIndex : sceneGraph.parsedScene.roots) {
@@ -2211,8 +2215,8 @@ private:
 		// The initial value at each point in the depth buffer should be the furthest possible depth, which is 1.0.
 		postProcessingClearValues[1].depthStencil = { 1.0f, 0 };
 
-		postProcessingRenderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-		postProcessingRenderPassInfo.pClearValues = clearValues.data();
+		postProcessingRenderPassInfo.clearValueCount = static_cast<uint32_t>(postProcessingClearValues.size());
+		postProcessingRenderPassInfo.pClearValues = postProcessingClearValues.data();
 		vkCmdBeginRenderPass(commandBuffer, &postProcessingRenderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
 		VkViewport postProcessingViewport{};
@@ -2312,7 +2316,10 @@ private:
 	}
 
 	void renderShadowNode(const Node& node, const int& globalNodeIndex, VkCommandBuffer commandBuffer, int currentFrame, glm::mat4& parentMatrix) {
-		static glm::mat4 lastFrameModelMatrix;
+		static glm::mat4 lastFrameModelMatrix = glm::mat4(1.0);
+		static glm::mat4 lastFrameViewMatrix = glm::mat4(1.0);
+		static glm::mat4 lastFrameProjMatrix = glm::mat4(1.0);
+		
 		glm::mat4 modelMatrix = calculateModelMatrix(node);
 
 		int nodeIndex = sceneGraph.getNodeIndex(sceneGraph.nodes, node);
@@ -2366,7 +2373,7 @@ private:
 
 		pushConstants.model = modelMatrix;
 		vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants), &pushConstants);
-		updateUniformBuffer(currentFrame, nodeIndex, lastFrameModelMatrix);
+		updateUniformBuffer(currentFrame, nodeIndex, modelMatrix, lastFrameModelMatrix, lastFrameViewMatrix, lastFrameProjMatrix);
 
 		if (node.mesh >= 0) {
 
@@ -2379,8 +2386,6 @@ private:
 			vkCmdDraw(commandBuffer, static_cast<uint32_t>(mesh.count), 1, 0, 0);
 		}
 
-		lastFrameModelMatrix = modelMatrix;
-
 		for (int childIndex : node.children) {
 			int containerIndex = sceneGraph.globalNodeIndexMap.at(childIndex);
 			const Node& childNode = sceneGraph.nodes.at(containerIndex);
@@ -2389,8 +2394,12 @@ private:
 	}
 
 	void renderMotionNode(const Node& node, const int& globalNodeIndex, VkCommandBuffer commandBuffer, int currentFrame, glm::mat4& parentMatrix) {
-		static glm::mat4 lastFrameModelMatrix;
 		glm::mat4 modelMatrix = calculateModelMatrix(node);
+
+		static glm::mat4 lastFrameModelMatrix = glm::mat4(1.0);
+		static glm::mat4 lastFrameViewMatrix = glm::mat4(1.0);
+		static glm::mat4 lastFrameProjMatrix = glm::mat4(1.0);
+
 
 		int nodeIndex = sceneGraph.getNodeIndex(sceneGraph.nodes, node);
 
@@ -2412,8 +2421,34 @@ private:
 
 		modelMatrix = parentMatrix * modelMatrix;
 
+		glm::mat4 viewMat;
+		glm::mat4 projMat;
+		glm::mat4 vpMat;
+		// getting vp matrix
+
+		if (isUserCameraActive) {
+			viewMat = userCamera.GetViewMatrix();
+			projMat = userCamera.GetProjectionMatrix();
+
+		}
+		else if (isRenderCameraActive) {
+			viewMat = renderCamera.GetViewMatrix();
+			projMat = renderCamera.GetProjectionMatrix();
+		}
+		vpMat = projMat * viewMat;
+
+		// frustum culling
+		if (node.mesh >= 0) {
+			BoundingBox box = box.calculateBoundingBox(node, sceneGraph, modelMatrix);
+			if (!isInsideFrustum(box, vpMat)) {
+				return;
+			}
+		}
+
 		// calculate materialIndex
 		int materialIndex = 0;
+		Material material;
+		int materialType = 0;
 		if (node.mesh >= 0) {
 			int meshContainerIndex = sceneGraph.meshIndexMap.at(node.mesh);
 			const Mesh& mesh = sceneGraph.meshes.at(meshContainerIndex);
@@ -2423,6 +2458,8 @@ private:
 
 			if (stride == 52) {
 				materialIndex = sceneGraph.materialIndexMap.at(mesh.material);
+				material = sceneGraph.materials.at(materialIndex);
+				materialType = material.getMaterialType();
 			}
 		}
 
@@ -2432,18 +2469,40 @@ private:
 		// bind descriptor
 		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[descriptorSetIndex], 0, nullptr);
 
-		if (node.light >= 0) {
-			int containerIndex = sceneGraph.lightIndexMap[node.light];
-			lights[containerIndex].position = glm::vec4(node.translation, 0.0);
-			lights[containerIndex].rotation = glm::vec4(quatToVec(node.rotation), 0.0);
-			updateLightBuffer(lights);
-		}
-
+		// bind pipeline
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, motionPipeline);
 
+		// update ubo & push constants
+		pushConstants.albedoColor = glm::vec4(-1);
+		pushConstants.roughness = 0;
+		pushConstants.metalness = 0;
+
+		if (materialType == 1) {
+			Lambertian& lambertian = std::get<Lambertian>(material.materialType);
+			if (std::holds_alternative<glm::vec3>(lambertian.albedo)) {
+				pushConstants.albedoColor = glm::vec4(std::get<glm::vec3>(lambertian.albedo), 1);
+			}
+		}
+		else if (materialType == 4) {
+			PBR& pbr = std::get<PBR>(material.materialType);
+			if (std::holds_alternative<glm::vec3>(pbr.albedo)) {
+				pushConstants.albedoColor = glm::vec4(std::get<glm::vec3>(pbr.albedo), 1);
+			}
+			if (std::holds_alternative<float>(pbr.roughness)) {
+				pushConstants.roughness = std::get<float>(pbr.roughness);
+			}
+			if (std::holds_alternative<float>(pbr.metalness)) {
+				pushConstants.metalness = std::get<float>(pbr.metalness);
+			}
+		}
 		pushConstants.model = modelMatrix;
+		pushConstants.materialType = materialType;
+		int lightCount = lights.size();
+		pushConstants.lightCount = lightCount;
+
 		vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants), &pushConstants);
-		updateUniformBuffer(currentFrame, nodeIndex, lastFrameModelMatrix);
+
+		updateUniformBuffer(currentFrame, nodeIndex, modelMatrix, lastFrameModelMatrix, lastFrameViewMatrix, lastFrameProjMatrix);
 
 		if (node.mesh >= 0) {
 
@@ -2456,19 +2515,25 @@ private:
 			vkCmdDraw(commandBuffer, static_cast<uint32_t>(mesh.count), 1, 0, 0);
 		}
 
-		lastFrameModelMatrix = modelMatrix;
 
 		for (int childIndex : node.children) {
 			int containerIndex = sceneGraph.globalNodeIndexMap.at(childIndex);
 			const Node& childNode = sceneGraph.nodes.at(containerIndex);
 			renderMotionNode(childNode, childIndex, commandBuffer, currentFrame, modelMatrix);
 		}
+
+		lastFrameModelMatrix = modelMatrix;
+		lastFrameViewMatrix = viewMat;
+		lastFrameProjMatrix = projMat;
 	}
 
 	void renderNode(const Node& node, const int& globalNodeIndex, VkCommandBuffer commandBuffer, int currentFrame, glm::mat4& parentMatrix) {
 
+		static glm::mat4 lastFrameModelMatrix = glm::mat4(1.0);
+		static glm::mat4 lastFrameViewMatrix = glm::mat4(1.0);
+		static glm::mat4 lastFrameProjMatrix = glm::mat4(1.0);
+
 		glm::mat4 modelMatrix;
-		static glm::mat4 lastFrameModelMatrix;
 		int nodeIndex = sceneGraph.getNodeIndex(sceneGraph.nodes, node);
 
 		if (nodeHasAnimation(globalNodeIndex)) {
@@ -2539,6 +2604,8 @@ private:
 		// bind descriptor
 		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[descriptorSetIndex], 0, nullptr);
 
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, screenColorPipeline);
+
 		// update ubo & push constants
 		pushConstants.albedoColor = glm::vec4(-1);
 		pushConstants.roughness = 0;
@@ -2564,11 +2631,12 @@ private:
 		}
 		pushConstants.model = modelMatrix;
 		pushConstants.materialType = materialType;
-		pushConstants.lightCount = lights.size();
+		int lightCount = lights.size();
+		pushConstants.lightCount = lightCount;
+		
 		vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants), &pushConstants);
 
-		updateUniformBuffer(currentFrame, nodeIndex, lastFrameModelMatrix);
-
+		updateUniformBuffer(currentFrame, nodeIndex, modelMatrix, lastFrameModelMatrix, lastFrameViewMatrix, lastFrameProjMatrix);
 
 		if (node.mesh >= 0) {
 
@@ -2577,9 +2645,7 @@ private:
 				if (materialType == 0) { vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, simpleGraphicsPipeline); }
 				else {
 					vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, screenColorPipeline);
-
 				}
-
 
 				int containerIndex = sceneGraph.meshIndexMap.at(node.mesh);
 				const Mesh& mesh = sceneGraph.meshes.at(containerIndex);
@@ -2611,16 +2677,12 @@ private:
 			updateLightBuffer(lights);
 		}
 
-		lastFrameModelMatrix = modelMatrix;
-
 		// recursively render children nodes
 		if (!node.children.empty()) {
 			for (int childIndex : node.children) {
 				int containerIndex = sceneGraph.globalNodeIndexMap.at(childIndex);
 				const Node& childNode = sceneGraph.nodes.at(containerIndex); //
-
 				renderNode(childNode, childIndex, commandBuffer, currentFrame, modelMatrix);
-
 			}
 		}
 	}
@@ -2651,40 +2713,13 @@ private:
 		// bind descriptor
 		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[descriptorSetIndex], 0, nullptr);
 
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-		if (node.mesh >= 0) {
+		VkBuffer buffers[] = { postProcessingVertBuffer };
+		VkDeviceSize offsets[] = { 0 };
+		vkCmdBindVertexBuffers(commandBuffer, 0, 1, &postProcessingVertBuffer, offsets);
 
-			try {
-
-				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-
-
-				int containerIndex = sceneGraph.meshIndexMap.at(node.mesh);
-				const Mesh& mesh = sceneGraph.meshes.at(containerIndex);
-
-				VkBuffer buffers[] = { postProcessingVertBuffer };
-				VkDeviceSize offsets[] = { 0 };
-				vkCmdBindVertexBuffers(commandBuffer, 0, 1, &postProcessingVertBuffer, offsets);
-
-
-				vkCmdDraw(commandBuffer, 3, 1, 0, 0);
-
-			}
-			catch (const std::out_of_range& e) {
-				std::cerr << "Out of Range error: " << e.what() << '\n';
-			}
-		}
-
-		// recursively render children nodes
-		if (!node.children.empty()) {
-			for (int childIndex : node.children) {
-				int containerIndex = sceneGraph.globalNodeIndexMap.at(childIndex);
-				const Node& childNode = sceneGraph.nodes.at(containerIndex); //
-
-				renderPostProcessingNode(childNode, childIndex, commandBuffer, currentFrame);
-
-			}
-		}
+		vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 	}
 
 	// Citation: convert quaternion to vectors https://www.zhihu.com/tardis/zm/art/78987582?source_id=1003
@@ -3229,8 +3264,8 @@ private:
 
 		VkPipelineDepthStencilStateCreateInfo depthStencil{};
 		depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-		depthStencil.depthTestEnable = VK_TRUE;
-		depthStencil.depthWriteEnable = VK_TRUE;
+		depthStencil.depthTestEnable = VK_FALSE;
+		depthStencil.depthWriteEnable = VK_FALSE;
 		// specifies if the depth of new fragments should be compared to the depth buffer
 		depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
 		// specifies the comparison that is performed to keep or discard fragments, lower depth = closer
@@ -3952,9 +3987,14 @@ private:
 		return glm::slerp(start, end, t);
 	}
 
-	void updateUniformBuffer(uint32_t currentImage, const int nodeIndex, const glm::mat4 lastFrameModelMatrix) {
+	void updateUniformBuffer(uint32_t currentImage, const int nodeIndex, const glm::mat4& modelMatrix, glm::mat4& lastFrameModelMatrix, glm::mat4& lastFrameViewMatrix, glm::mat4& lastFrameProjMatrix) {
 
 		UniformBufferObject ubo{};
+
+		ubo.previousModelMat = lastFrameModelMatrix;
+		ubo.previousViewMat = lastFrameViewMatrix;
+		ubo.previousProjMat = lastFrameProjMatrix;
+
 
 		glm::vec3 lightPos = lights[0].position;
 		glm::vec3 lightDir = lights[0].rotation;
@@ -3968,8 +4008,6 @@ private:
 		lightSpaceMatrix = debugCamera.GetProjectionMatrix() * debugCamera.GetViewMatrix();
 
 		ubo.lightSpace = lightSpaceMatrix;
-
-		ubo.previousModel = lastFrameModelMatrix;
 
 		if (isDebugCameraActive) {
 
@@ -3995,14 +4033,12 @@ private:
 
 		}
 
+		// GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted;
 		ubo.projection[1][1] *= -1;
 
-
-		// GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted;
-
 		memcpy(uniformBuffersMapped[currentFrame], &ubo, sizeof(ubo)); //we only map the uniform buffer once
-
 	}
+
 
 	void cleanupTexture(Texture& texture) {
 		if (texture.imageView != VK_NULL_HANDLE) {
@@ -4077,6 +4113,11 @@ private:
 		vkFreeMemory(device, motionImageMemory, nullptr);
 		vkDestroyFramebuffer(device, motionFramebuffer, nullptr);
 
+		vkDestroyImageView(device, screenColorImageView, nullptr);
+		vkDestroyImage(device, screenColorImage, nullptr);
+		vkFreeMemory(device, screenColorImageMemory, nullptr);
+		vkDestroyFramebuffer(device, screenColorFramebuffer, nullptr);
+
 
 		vkDestroySampler(device, textureSampler, nullptr);
 		vkDestroySampler(device, shadowSampler, nullptr);
@@ -4113,6 +4154,9 @@ private:
 		vkDestroyBuffer(device, indexBuffer, nullptr);
 		vkFreeMemory(device, indexBufferMemory, nullptr);
 
+		vkDestroyBuffer(device, postProcessingVertBuffer, nullptr);
+		vkFreeMemory(device, postProcessingVertBufferMemory, nullptr);
+
 		for (auto& mesh : sceneGraph.meshes) {
 			vkDestroyBuffer(device, mesh.vertexBuffer, nullptr);
 			vkFreeMemory(device, mesh.vertexBufferMemory, nullptr);
@@ -4130,10 +4174,12 @@ private:
 		vkDestroyPipeline(device, simpleGraphicsPipeline, nullptr);
 		vkDestroyPipeline(device, shadowPipeline, nullptr);
 		vkDestroyPipeline(device, motionPipeline, nullptr);
+		vkDestroyPipeline(device, screenColorPipeline, nullptr);
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		vkDestroyRenderPass(device, swapChainRenderPass, nullptr);
 		vkDestroyRenderPass(device, shadowRenderPass, nullptr);
 		vkDestroyRenderPass(device, motionRenderPass, nullptr);
+		vkDestroyRenderPass(device, screenColorRenderPass, nullptr);
 
 		vkDestroyDevice(device, nullptr);
 		vkDestroySurfaceKHR(instance, surface, nullptr);

@@ -4,13 +4,16 @@ layout(binding = 0) uniform UniformBufferObject {
      mat4 view;
     mat4 proj;
     mat4 lightSpace;
-    mat4 previousModel;
+    mat4 previousModelMat;
+    mat4 previousViewMat;
+    mat4 previousProjMat;
     vec4 cameraPos;
 } ubo;
 
 layout(push_constant) uniform PushConstants {
     mat4 model;
 	vec4 albedoColor;
+    vec2 motionVector;
 	float roughness;
 	float metalness;
 	int materialType;

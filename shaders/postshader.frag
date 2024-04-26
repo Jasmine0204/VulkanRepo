@@ -1,6 +1,7 @@
 #version 450
 
 layout(location = 0) in vec2 fragTexCoord;
+
 layout(location = 0) out vec4 outColor;
 
 
@@ -12,9 +13,10 @@ layout(binding = 8) uniform sampler2D screenColorTexture;
 void main() {
 
     vec4 blurColor = texture(screenColorTexture, fragTexCoord);
-    // motion blur texture
-    vec2 motionVector = texture(motionMap, fragTexCoord).xy;
 
+    // motion blur texture
+    vec2 motionVector = texture(motionMap, fragTexCoord).xy * 2.0 - 1.0;
+    
       // motion blur
       float totalWeight = 1.0;
       int samples = 5;
@@ -31,6 +33,8 @@ void main() {
 
     blurColor /= totalWeight;
     outColor = blurColor;
+
+    //outColor = vec4(motionVector, 0.0, 1.0);
 
 }
 
